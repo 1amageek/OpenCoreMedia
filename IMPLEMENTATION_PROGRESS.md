@@ -202,8 +202,10 @@ to this list before implementation.
 - Native:
   `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
-  -only-testing:OpenCoreMediaTests`
-  — passed 37 behavior tests in 8 suites on 2026-07-24.
+  -only-testing:OpenCoreMediaTests
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  — passed 37 behavior tests in 8 suites with the Swift 6.4 development
+  snapshot compiler on 2026-07-25.
 - Time mapping differential:
   `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
@@ -227,15 +229,21 @@ to this list before implementation.
   — passed 11 tests on 2026-07-24, including Apple timing-copy propagation,
   independent metadata storage, and unchanged image-buffer identity.
 - WASM:
-  `swiftly run swift build +6.3.1 --swift-sdk
-  swift-6.3.1-RELEASE_wasm --target OpenCoreMedia`
-  — passed after `swift package clean` with the matching Swift 6.3.1 compiler
-  and SDK on 2026-07-24.
+  `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
+  --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
+  --swift-sdk
+  swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm
+  --target OpenCoreMedia`
+  — passed after `swift package clean` with the matching Swift 6.4
+  development snapshot compiler and SDK on 2026-07-25.
 - Embedded WASM:
-  `swiftly run swift build +6.3.1 --swift-sdk
-  swift-6.3.1-RELEASE_wasm-embedded --target OpenCoreMedia`
-  — passed after `swift package clean` with the matching Swift 6.3.1 compiler
-  and SDK on 2026-07-24.
+  `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
+  --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
+  --swift-sdk
+  swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
+  --target OpenCoreMedia`
+  — passed after `swift package clean` with the matching Swift 6.4
+  development snapshot compiler and SDK on 2026-07-25.
 
 ## Explicitly not implemented
 
