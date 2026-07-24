@@ -15,6 +15,7 @@ public final class CMImageSampleBuffer<
     private let format: VideoFormat
     private let count: Int
     private let timing: CMSampleTimingInfo
+    public let attachments = CMAttachmentBearerAttachments()
 
 #if hasFeature(Embedded)
     private var embeddedState: State
@@ -127,15 +128,17 @@ public final class CMImageSampleBuffer<
     > {
         let readiness = try currentReadiness()
 
-        // The new sample buffer retains the same image-buffer reference. Only
-        // timing metadata and the small state container are newly allocated.
-        return try CMImageSampleBuffer(
+        // The new sample buffer retains the same image-buffer reference.
+        // Timing, readiness, and attachment metadata receive new storage.
+        let copy = try CMImageSampleBuffer(
             imageBuffer: image,
             formatDescription: format,
             sampleCount: count,
             timing: timing,
             dataReadiness: readiness
         )
+        CMPropagateAttachments(self, destination: copy)
+        return copy
     }
 
     public func setDataReadiness(

@@ -1,5 +1,6 @@
 public protocol CMSampleBuffer:
     AnyObject,
+    CMAttachmentBearerProtocol,
     CMPlatformConcurrencyContract
 {
     associatedtype ImageBuffer: CVPixelBuffer

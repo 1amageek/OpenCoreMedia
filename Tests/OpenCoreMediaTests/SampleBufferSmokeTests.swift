@@ -74,6 +74,60 @@ struct SampleBufferSmokeTests {
         #expect(try original.timingInfo(at: 0) == fixture.timing)
     }
 
+    @Test("Timing copies propagate metadata into independent storage")
+    func timingCopyPropagatesAttachments() throws {
+        let fixture = try makeFixture()
+        let original = try CMImageSampleBuffer(
+            imageBuffer: fixture.image,
+            formatDescription: fixture.format,
+            timing: [fixture.timing]
+        )
+        let propagatedKey = CMAttachmentKey(rawValue: "test.propagated")
+        let localKey = CMAttachmentKey(rawValue: "test.local")
+        CMSetAttachment(
+            original,
+            key: propagatedKey,
+            value: .integer(17),
+            attachmentMode: .shouldPropagate
+        )
+        CMSetAttachment(
+            original,
+            key: localKey,
+            value: .boolean(true),
+            attachmentMode: .shouldNotPropagate
+        )
+
+        let copy = try original.copy(withTiming: [fixture.timing])
+
+        #expect(try original.imageBuffer() === copy.imageBuffer())
+        #expect(CMGetAttachment(
+            copy,
+            key: propagatedKey
+        ) == CMAttachment(
+            value: .integer(17),
+            mode: .shouldPropagate
+        ))
+        #expect(CMGetAttachment(copy, key: localKey) == nil)
+
+        CMSetAttachment(
+            original,
+            key: propagatedKey,
+            value: .integer(29),
+            attachmentMode: .shouldPropagate
+        )
+        #expect(CMGetAttachment(
+            copy,
+            key: propagatedKey
+        )?.value == .integer(17))
+
+        CMRemoveAttachment(copy, key: propagatedKey)
+        #expect(CMGetAttachment(copy, key: propagatedKey) == nil)
+        #expect(CMGetAttachment(
+            original,
+            key: propagatedKey
+        )?.value == .integer(29))
+    }
+
     @Test("Sample count and timing mismatches are typed failures")
     func countAndTimingFailures() throws {
         let fixture = try makeFixture()

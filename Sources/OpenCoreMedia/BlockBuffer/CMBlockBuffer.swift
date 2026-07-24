@@ -1,4 +1,9 @@
 public final class CMBlockBuffer: CMBlockBufferProtocol {
+    // FIXME(INCOMPLETE_IMPLEMENTATION): CMBlockBuffer currently has no
+    // CMAttachmentBearerProtocol conformance, so attachment operations have no
+    // callable path for block buffers and fail at compile time. Block-buffer
+    // attachments must not be reported as supported until storage, propagation,
+    // reference-copy behavior, and Apple differential tests are implemented.
     public typealias CustomBlockDeallocator = (
         UnsafeMutableRawPointer,
         Int

@@ -5,8 +5,10 @@
 This document is the normative design for the package. The package has completed
 behavior Smokes for rational time, basic time ranges, immutable video
 descriptions, ready image sample buffers, and a contiguous zero-copy block
-buffer owner/view path. These milestones are intentionally narrower than Core
-Media API compatibility; the remaining sequence below is still required.
+buffer owner/view path. Buffer-level attachment operations and timing-copy
+propagation are also implemented. These milestones are intentionally narrower
+than Core Media API compatibility; the remaining sequence below is still
+required.
 
 ## Apple API review
 
@@ -154,7 +156,8 @@ CMSampleBuffer
 ├── CMFormatDescription?
 ├── [CMSampleTimingInfo]
 ├── sample sizes
-├── attachments
+├── buffer-level attachments
+├── per-sample attachments
 └── payload
     ├── CMBlockBuffer
     ├── CVImageBuffer
@@ -183,6 +186,39 @@ any valid state ──invalidate──► invalid
 
 Failed or invalid data is never exposed as an empty successful sample.
 
+### Attachments
+
+`CMSampleBuffer` is a `CMAttachmentBearerProtocol`. Its
+`CMAttachmentBearerAttachments` storage is metadata owned by the sample buffer
+and is separate from attachments on the retained Core Video image buffer. The
+current portable value contract supports Boolean, signed and unsigned integer,
+floating-point, and string values. It does not pretend to accept Apple's
+complete `CFType` value space.
+
+The Swift overlay supports `attachments[key]`, `propagated`,
+`nonPropagated`, `merge(_:mode:)`, `removeAll()`, and
+`propagateAttachments(to:)`. The C-derived operation surface also follows
+Apple's basic call shapes:
+
+- `CMGetAttachment`
+- `CMCopyDictionaryOfAttachments`
+- `CMSetAttachment`
+- `CMSetAttachments`
+- `CMRemoveAttachment`
+- `CMRemoveAllAttachments`
+- `CMPropagateAttachments`
+
+Propagation first snapshots all `.shouldPropagate` entries from the source,
+then updates the destination. Source and destination locks are never nested.
+A timing-only sample-buffer copy retains the same image-buffer owner, creates
+independent attachment storage, and copies only propagatable entries. Later
+mutation of either attachment storage cannot change the other.
+
+Apple's `CMSampleBufferGetSampleAttachmentsArray` is a different contract: it
+exposes one mutable attachment dictionary for every individual sample. That API
+is not represented by the buffer-level bearer storage and remains pending until
+multi-sample storage and mutation ownership are designed together.
+
 ## Ownership and zero-copy contract
 
 1. `CMBlockBuffer` retains segment owners and lends scoped views.
@@ -190,10 +226,12 @@ Failed or invalid data is never exposed as an empty successful sample.
 3. Copy operations share immutable storage unless the documented operation
    explicitly requires new bytes.
 4. Timing-only copies do not copy media payload.
-5. Borrowed pointers and ranges do not cross ownership or concurrency boundaries.
-6. Large payloads are not converted to `Array`, `Data`, or `String` inside the
+5. Timing-only copies use independent metadata storage and propagate only
+   attachments marked `.shouldPropagate`.
+6. Borrowed pointers and ranges do not cross ownership or concurrency boundaries.
+7. Large payloads are not converted to `Array`, `Data`, or `String` inside the
    routing path.
-7. A required contiguous copy is visible in the operation and documented.
+8. A required contiguous copy is visible in the operation and documented.
 
 Short in-memory state is protected with `Mutex`. Ordered readiness operations that
 can suspend use an actor. `await` never occurs inside `withLock`.
@@ -236,6 +274,12 @@ OpenCoreMedia preserves those subscripts for valid basic use and additionally
 offers `slice(_:) throws(CMBlockBufferError)` when the caller needs a typed range
 failure instead of a precondition.
 
+Apple attachment values may be any Core Foundation object. OpenCoreMedia has no
+CoreFoundation dependency on shared targets, so `CMAttachmentValue` is a typed,
+portable value set. Composite values, byte payloads, and platform-object boxes
+must gain explicit ownership and Sendable contracts before being added; callers
+must not encode unsupported values into lossy strings.
+
 ## Error contract
 
 Invalid timing, inconsistent sample counts, incompatible format descriptions,
@@ -267,7 +311,8 @@ empty sample unless Apple documents that exact result.
 6. Implement `CMSampleTimingInfo` and ready sample buffers.
    **Image-buffer Smoke complete.**
 7. Implement readiness, failure, invalidation, and attachments.
-   **State Smoke complete; attachments pending.**
+   **State and buffer-level attachment Smokes complete; per-sample attachments
+   and composite values pending.**
 8. Implement clocks, timebases, and queues.
 9. Add cross-platform conformance fixtures using OpenCoreVideo buffers.
 

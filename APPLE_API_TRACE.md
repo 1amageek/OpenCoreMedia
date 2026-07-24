@@ -17,7 +17,8 @@
 | `CMBlockBuffer` | `CMBlockBuffer.h` | One contiguous external owner, references, slices, explicit copy operations | Partial | Segments, append, deferred allocation, contiguous materialization |
 | `CMFormatDescription` | `CMFormatDescription.h` | Immutable video description | Partial | Audio, metadata, codec extensions |
 | `CMSampleBuffer` | `CMSampleBuffer.h` | One-image sample, timing, readiness, invalidation, timing-only copy | Partial | Multi-sample, block payload, size arrays, callbacks |
-| Attachments | `CMAttachment.h` | No Core Media bearer implementation | Planned | Propagation modes and sample attachment behavior |
+| Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Swift bearer overlay, typed scalar values, modes, C-derived operations, and timing-copy propagation | Partial | Composite values and `CMBlockBuffer` bearer conformance |
+| Per-sample attachments | `CMSampleBuffer.h` | No mutable per-sample dictionary array | Planned | One dictionary per sample and copy behavior |
 | Clocks and timebases | `CMSync.h`, `CMAudioClock.h`, `CMAudioDeviceClock.h` | No declaration | Planned | Injected source, rate, anchor, and ordering tests |
 | Timed and simple queues | `CMBufferQueue.h`, `CMSimpleQueue.h` | No declaration | Planned | Ordering, trigger, capacity, and shutdown tests |
 | Memory pools | `CMMemoryPool.h` | No declaration | Planned | Allocation and lifecycle tests |
