@@ -1,5 +1,11 @@
 # OpenCoreMedia Implementation Progress
 
+## Apple API trace
+
+- [x] Framework header-family inventory recorded in `APPLE_API_TRACE.md`
+- [x] Implemented, partial, and planned responsibilities are distinguished
+- [x] Callable partial `CMBlockBuffer` behavior has a source marker
+
 ## Smoke definition
 
 The first smoke milestone is complete only when behavior tests demonstrate:

@@ -12,6 +12,11 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         deallocator: @escaping CustomBlockDeallocator,
         flags: Flags = []
     ) throws(CMBlockBufferError) {
+        // FIXME(INCOMPLETE_IMPLEMENTATION): The production constructor currently
+        // accepts one already-allocated contiguous segment and rejects every
+        // allocation-policy flag. It must not accept these flags until
+        // deferred allocation and explicit contiguous materialization preserve
+        // their documented ownership and copy behavior.
         guard flags.isEmpty else {
             throw .unsupportedFlags(rawValue: flags.rawValue)
         }

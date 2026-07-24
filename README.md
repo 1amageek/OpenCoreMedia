@@ -26,6 +26,8 @@ Apple platforms should import Apple's `CoreMedia` framework.
 ## Design
 
 Read [DESIGN.md](DESIGN.md) before adding public API or buffer implementations.
+Use [APPLE_API_TRACE.md](APPLE_API_TRACE.md) to distinguish implemented,
+partial, and planned Apple Core Media families.
 
 ## Build
 
