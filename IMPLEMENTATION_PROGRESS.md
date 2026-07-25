@@ -43,6 +43,19 @@ The buffer-level attachment slice additionally requires:
 - unchanged zero-copy image payload ownership;
 - differential behavior against Apple Core Media.
 
+The per-sample attachment slice additionally requires:
+
+- no attachment dictionary allocation before first requested access;
+- one fixed dictionary view per declared sample;
+- direct mutation through Apple-shaped array and key subscripts;
+- all 13 standard sample key raw values from the reviewed SDK overlay;
+- direct dictionary iteration through `Sequence`;
+- typed failure for incompatible standard-key value access;
+- recursive array and string-keyed dictionary values;
+- independent metadata after a timing-only copy;
+- unchanged zero-copy image payload ownership;
+- differential behavior against Apple Core Media.
+
 ## Required implementation
 
 ### Time
@@ -82,11 +95,16 @@ The buffer-level attachment slice additionally requires:
 - [x] `CMAttachmentBearerProtocol` and `CMAttachmentBearerAttachments`
 - [x] Keyed Swift-overlay access, merge, remove-all, and propagation
 - [x] Attachment modes and scalar portable values
+- [x] Recursive attachment array and dictionary values
 - [x] Get, copy, set, batch set, remove, and remove-all operations
 - [x] Propagatable-only attachment transfer
 - [x] Timing-copy attachment propagation into independent storage
-- [ ] Composite attachment values and platform-object adapters
-- [ ] Per-sample attachment dictionaries
+- [x] Lazy fixed-length per-sample attachment array
+- [x] Mutable, iterable per-sample dictionary views and all standard keys
+- [x] Typed Boolean access and incompatible-value failure
+- [x] Timing-copy preservation and independent per-sample metadata
+- [ ] Attachment byte values and platform-object adapters
+- [ ] Multi-sample payload carrier
 
 ### Block buffers
 
@@ -113,6 +131,15 @@ its own small readiness state, and independent attachment storage. Only
 object identity and shared mutation through borrowed pixel-buffer byte access:
 writes through the source, original sample, and timing-only copy are observed
 from the same media storage, while later attachment mutations remain isolated.
+
+Per-sample attachment storage starts unmaterialized. First requested access
+creates a fixed array with one dictionary owner per sample. A timing copy
+preserves the unmaterialized state when the source has no per-sample metadata.
+When materialized, it copies each dictionary directly into one destination
+owner array. Recursive array and dictionary values use copy-on-write backing;
+no image bytes are read or copied. The optional owner array lives in the
+sample's existing state, so unused per-sample attachments do not require a
+separate coordinator allocation.
 
 The public initializer retains its one-element timing-array input for API
 compatibility. After validating that input, the single-sample implementation
@@ -188,26 +215,33 @@ Reviewed with `remark` on 2026-07-24:
 - `CMRemoveAllAttachments`
 - `CMPropagateAttachments`
 - `CMSampleBufferGetSampleAttachmentsArray`
+- `CMSampleBuffer.sampleAttachments`
+- `CMSampleBuffer.SampleAttachmentsArray`
+- `CMSampleBuffer.PerSampleAttachmentsDictionary`
+- `CMSampleBuffer.PerSampleAttachmentsDictionary.Key`
+- Sample Attachment Keys
 - `CMSampleBufferCreateCopy`
 - `CMSampleBufferCreateCopyWithNewTiming`
 
-The second Smoke also checked the Swift declarations emitted from the local
-macOS 27 SDK with `swift-symbolgraph-extract` and read `CMTimeRange.h` and
-`CMBlockBuffer.h` directly. The reviewed behavior and portable differences are
-recorded in `DESIGN.md`. Additional Apple-named APIs must be reviewed and added
-to this list before implementation.
+The second Smoke checked the Swift declarations emitted from the local macOS 27
+SDK with `swift-symbolgraph-extract` and read `CMTimeRange.h` and
+`CMBlockBuffer.h` directly. The per-sample attachment slice refreshed that
+symbol graph on 2026-07-25 and read the relevant `CMSampleBuffer.h` declarations.
+The reviewed behavior and portable differences are recorded in `DESIGN.md`.
+Additional Apple-named APIs must be reviewed and added to this list before
+implementation.
 
 ## Test evidence
 
 - Native:
-  `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests
   SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
-  — passed 37 behavior tests in 8 suites with the Swift 6.4 development
+  — passed 43 behavior tests in 9 suites with the Swift 6.4 development
   snapshot compiler on 2026-07-25.
 - Time mapping differential:
-  `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests/CMTimeMappingSmokeTests
   -only-testing:OpenCoreMediaTests/CMTimeMappingAppleDifferentialTests`
@@ -215,19 +249,29 @@ to this list before implementation.
   endpoint preservation, nonintegral nanosecond mapping, epoch failures,
   infinite ranges, clamping, and positive/negative folding.
 - Scalar timing-storage regression:
-  `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests/SampleBufferSmokeTests`
   — passed on 2026-07-24, including index `0`, negative, and upper-bound
   timing access plus payload identity and readiness behavior.
 - Buffer-level attachments:
-  `xcodebuild test -scheme OpenCoreMedia -destination 'platform=macOS'
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests/CMAttachmentSmokeTests
   -only-testing:OpenCoreMediaTests/CMAttachmentAppleDifferentialTests
   -only-testing:OpenCoreMediaTests/SampleBufferSmokeTests`
   — passed 11 tests on 2026-07-24, including Apple timing-copy propagation,
   independent metadata storage, and unchanged image-buffer identity.
+- Per-sample attachments:
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
+  -maximum-test-execution-time-allowance 30
+  -only-testing:OpenCoreMediaTests/CMSampleAttachmentSmokeTests
+  -only-testing:OpenCoreMediaTests/CMAttachmentAppleDifferentialTests
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  — passed on 2026-07-25, including lazy creation, fixed length, direct
+  mutation, all standard raw keys, direct iteration, typed mismatch failure,
+  recursive values, concurrent mutation/copy, Apple copy behavior, independent
+  metadata, and unchanged image-buffer identity.
 - WASM:
   `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
   --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
@@ -244,13 +288,20 @@ to this list before implementation.
   --target OpenCoreMedia`
   — passed after `swift package clean` with the matching Swift 6.4
   development snapshot compiler and SDK on 2026-07-25.
+- Embedded runtime:
+  `./scripts/run-embedded-smoke.sh`
+  — built `OpenCoreMediaEmbeddedSmoke.wasm` with the fixed Swift 6.4
+  Embedded SDK and executed it through Node WASI on 2026-07-25. The smoke
+  validates lazy creation, recursive mutation, timing-copy metadata
+  independence, and unchanged image-buffer identity on the owner-isolated
+  branch.
 
 ## Explicitly not implemented
 
 - segmented or deferred-allocation `CMBlockBuffer`
 - `CMBlockBuffer.append`, `makeContiguous`, and Foundation `dataBytes`
-- composite attachment values and arbitrary platform-object values
-- per-sample attachment dictionaries
+- attachment byte values and arbitrary platform-object values
+- multi-sample payload carriers
 - asynchronous data readiness callbacks
 - clocks, timebases, and queues
 - platform camera, codec, and file adapters

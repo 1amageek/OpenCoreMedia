@@ -24,6 +24,16 @@ let package = Package(
             name: "OpenCoreMedia",
             dependencies: ["OpenCoreVideo"]
         ),
+        .executableTarget(
+            name: "OpenCoreMediaEmbeddedSmoke",
+            dependencies: ["OpenCoreMedia"],
+            linkerSettings: [
+                .linkedLibrary(
+                    "swiftUnicodeDataTables",
+                    .when(platforms: [.wasi])
+                )
+            ]
+        ),
         .testTarget(
             name: "OpenCoreMediaTests",
             dependencies: ["OpenCoreMedia"]

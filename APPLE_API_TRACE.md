@@ -2,7 +2,7 @@
 
 ## Baseline
 
-- Review date: 2026-07-24
+- Review dates: 2026-07-24 and 2026-07-25
 - SDK: macOS 27.0 from the active Xcode beta
 - Documentation: Apple Developer Documentation read with `remark`
 - Local evidence: `CoreMedia.framework/Headers`, the SDK symbol graph, package
@@ -17,8 +17,8 @@
 | `CMBlockBuffer` | `CMBlockBuffer.h` | One contiguous external owner, references, slices, explicit copy operations | Partial | Segments, append, deferred allocation, contiguous materialization |
 | `CMFormatDescription` | `CMFormatDescription.h` | Immutable video description | Partial | Audio, metadata, codec extensions |
 | `CMSampleBuffer` | `CMSampleBuffer.h` | One-image sample, timing, readiness, invalidation, timing-only copy | Partial | Multi-sample, block payload, size arrays, callbacks |
-| Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Swift bearer overlay, typed scalar values, modes, C-derived operations, and timing-copy propagation | Partial | Composite values and `CMBlockBuffer` bearer conformance |
-| Per-sample attachments | `CMSampleBuffer.h` | No mutable per-sample dictionary array | Planned | One dictionary per sample and copy behavior |
+| Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Swift bearer overlay, recursively typed portable values, modes, C-derived operations, and timing-copy propagation | Partial | Byte values, platform-object adapters, and `CMBlockBuffer` bearer conformance |
+| Per-sample attachments | `CMSampleBuffer.h`, SDK Swift overlay | Lazy fixed-length array, mutable dictionary views, standard keys, typed Boolean access, and independent timing-copy metadata | Partial | Multi-sample payload carrier and broader codec-specific values |
 | Clocks and timebases | `CMSync.h`, `CMAudioClock.h`, `CMAudioDeviceClock.h` | No declaration | Planned | Injected source, rate, anchor, and ordering tests |
 | Timed and simple queues | `CMBufferQueue.h`, `CMSimpleQueue.h` | No declaration | Planned | Ordering, trigger, capacity, and shutdown tests |
 | Memory pools | `CMMemoryPool.h` | No declaration | Planned | Allocation and lifecycle tests |

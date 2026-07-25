@@ -6,9 +6,11 @@ public final class CMImageSampleBuffer<
     ImageBuffer: CVPixelBuffer,
     VideoFormat: CMVideoFormatDescription
 >: CMSampleBuffer {
-    private struct State: Sendable {
+    private struct State: CMPlatformConcurrencyContract {
         var isValid: Bool
         var readiness: CMSampleBufferDataReadiness
+        var sampleAttachmentStorages:
+            [CMSampleAttachmentDictionaryStorage]?
     }
 
     private let image: ImageBuffer
@@ -41,6 +43,12 @@ public final class CMImageSampleBuffer<
             state.readiness
         }
 #endif
+    }
+
+    public var sampleAttachments: CMSampleAttachmentsArray {
+        CMSampleAttachmentsArray(
+            storages: materializedSampleAttachmentStorages()
+        )
     }
 
     public init(
@@ -84,10 +92,15 @@ public final class CMImageSampleBuffer<
 #if hasFeature(Embedded)
         embeddedState = State(
             isValid: true,
-            readiness: dataReadiness
+            readiness: dataReadiness,
+            sampleAttachmentStorages: nil
         )
 #else
-        state = Mutex(State(isValid: true, readiness: dataReadiness))
+        state = Mutex(State(
+            isValid: true,
+            readiness: dataReadiness,
+            sampleAttachmentStorages: nil
+        ))
 #endif
     }
 
@@ -138,7 +151,21 @@ public final class CMImageSampleBuffer<
             dataReadiness: readiness
         )
         CMPropagateAttachments(self, destination: copy)
+        copySampleAttachments(to: copy)
         return copy
+    }
+
+    public func sampleAttachments(
+        createIfNecessary: Bool
+    ) -> CMSampleAttachmentsArray? {
+        if createIfNecessary {
+            return sampleAttachments
+        }
+        guard let storages = existingSampleAttachmentStorages()
+        else {
+            return nil
+        }
+        return CMSampleAttachmentsArray(storages: storages)
     }
 
     public func setDataReadiness(
@@ -211,6 +238,82 @@ public final class CMImageSampleBuffer<
             return state.readiness
         }
 #endif
+    }
+
+    private func materializedSampleAttachmentStorages()
+        -> [CMSampleAttachmentDictionaryStorage]
+    {
+#if hasFeature(Embedded)
+        if let storages = embeddedState.sampleAttachmentStorages {
+            return storages
+        }
+        let created = Self.makeSampleAttachmentStorages(count: count)
+        embeddedState.sampleAttachmentStorages = created
+        return created
+#else
+        state.withLock { state in
+            if let storages = state.sampleAttachmentStorages {
+                return storages
+            }
+            let created = Self.makeSampleAttachmentStorages(count: count)
+            state.sampleAttachmentStorages = created
+            return created
+        }
+#endif
+    }
+
+    private func existingSampleAttachmentStorages()
+        -> [CMSampleAttachmentDictionaryStorage]?
+    {
+#if hasFeature(Embedded)
+        embeddedState.sampleAttachmentStorages
+#else
+        state.withLock { state in
+            state.sampleAttachmentStorages
+        }
+#endif
+    }
+
+    private func copySampleAttachments(
+        to destination: borrowing CMImageSampleBuffer<
+            ImageBuffer,
+            VideoFormat
+        >
+    ) {
+        guard let sourceStorages = existingSampleAttachmentStorages()
+        else {
+            return
+        }
+
+        var copiedStorages: [CMSampleAttachmentDictionaryStorage] = []
+        copiedStorages.reserveCapacity(sourceStorages.count)
+        for storage in sourceStorages {
+            copiedStorages.append(storage.copy())
+        }
+        destination.installSampleAttachmentStorages(copiedStorages)
+    }
+
+    private func installSampleAttachmentStorages(
+        _ storages: consuming [CMSampleAttachmentDictionaryStorage]
+    ) {
+#if hasFeature(Embedded)
+        embeddedState.sampleAttachmentStorages = storages
+#else
+        state.withLock { state in
+            state.sampleAttachmentStorages = storages
+        }
+#endif
+    }
+
+    private static func makeSampleAttachmentStorages(
+        count: Int
+    ) -> [CMSampleAttachmentDictionaryStorage] {
+        var result: [CMSampleAttachmentDictionaryStorage] = []
+        result.reserveCapacity(count)
+        for _ in 0..<count {
+            result.append(CMSampleAttachmentDictionaryStorage())
+        }
+        return result
     }
 
     private static func validate(

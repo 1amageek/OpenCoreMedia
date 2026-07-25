@@ -6,15 +6,17 @@ Media API on platforms where Apple's Core Media framework is unavailable.
 The implemented behavior Smokes cover rational `CMTime`, `CMTimeRange`,
 `CMTimeMapping`, range mapping and folding, `CMSampleTimingInfo`, immutable video
 format descriptions, zero-copy image sample buffers backed by OpenCoreVideo,
-buffer-level attachments with propagation modes, and a contiguous zero-copy
-`CMBlockBuffer` owner/view path. External byte storage is borrowed through
-scoped raw-buffer closures and released exactly once after its last buffer or
-slice owner is destroyed.
+buffer-level attachments with propagation modes, lazily materialized per-sample
+attachment dictionaries, recursively typed attachment collections, and a
+contiguous zero-copy `CMBlockBuffer` owner/view path. External byte storage is
+borrowed through scoped raw-buffer closures and released exactly once after its
+last buffer or slice owner is destroyed.
 
 This is not complete Core Media API compatibility. Segmented block buffers,
-composite attachment values, per-sample attachment dictionaries, asynchronous
-readiness, clocks, timebases, and queues remain explicitly unimplemented. See
-[IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md) for current evidence.
+attachment byte payloads and platform-object adapters, multi-sample payload
+carriers, asynchronous readiness, clocks, timebases, and queues remain
+explicitly unimplemented. See [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md)
+for current evidence.
 
 ## Supported production targets
 
@@ -34,7 +36,7 @@ partial, and planned Apple Core Media families.
 
 ```bash
 xcodebuild test \
-  -scheme OpenCoreMedia \
+  -scheme OpenCoreMedia-Package \
   -destination 'platform=macOS' \
   -maximum-test-execution-time-allowance 30 \
   SWIFT_EXEC="$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc"
@@ -44,4 +46,11 @@ xcodebuild test \
 "$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift" build \
   --swift-sdks-path "$HOME/Library/org.swift.swiftpm/swift-sdks" \
   --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
+./scripts/run-embedded-smoke.sh
 ```
+
+The Embedded smoke links Swift's Unicode data tables in its final WASI
+executable because the public attachment contract includes string keys. Library
+targets compile without an application linker step; an Embedded application
+using equivalent string operations must link `swiftUnicodeDataTables` in its
+WASI executable target.

@@ -9,6 +9,7 @@ public protocol CMSampleBuffer:
 
     var isValid: Bool { get }
     var dataReadiness: CMSampleBufferDataReadiness { get }
+    var sampleAttachments: CMSampleAttachmentsArray { get }
 
     func sampleCount() throws(CMSampleBufferError) -> Int
     func formatDescription()
@@ -21,6 +22,9 @@ public protocol CMSampleBuffer:
     func copy(
         withTiming timing: [CMSampleTimingInfo]
     ) throws(CMSampleBufferError) -> TimingCopy
+    func sampleAttachments(
+        createIfNecessary: Bool
+    ) -> CMSampleAttachmentsArray?
     func setDataReadiness(
         _ readiness: CMSampleBufferDataReadiness
     ) throws(CMSampleBufferError)

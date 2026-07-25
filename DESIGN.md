@@ -6,9 +6,10 @@ This document is the normative design for the package. The package has completed
 behavior Smokes for rational time, basic time ranges, immutable video
 descriptions, ready image sample buffers, and a contiguous zero-copy block
 buffer owner/view path. Buffer-level attachment operations and timing-copy
-propagation are also implemented. These milestones are intentionally narrower
-than Core Media API compatibility; the remaining sequence below is still
-required.
+propagation are also implemented. The current image-sample path additionally
+provides lazy per-sample attachment dictionaries and their timing-copy behavior.
+These milestones are intentionally narrower than Core Media API compatibility;
+the remaining sequence below is still required.
 
 ## Apple API review
 
@@ -37,6 +38,11 @@ The second Smoke also inspected the locally installed Xcode beta SDK on
 - `MacOSX27.0.sdk/System/Library/Frameworks/CoreMedia.framework/Headers/CMBlockBuffer.h`;
 - the public `CoreMedia` symbol graph emitted by
   `swift-symbolgraph-extract`.
+
+The per-sample attachment slice refreshed the macOS 27 SDK symbol graph and read
+`CMSampleBufferGetSampleAttachmentsArray(_:createIfNecessary:)` plus the Sample
+Attachment Keys documentation with `remark` on 2026-07-25. It also read the
+installed `CMSampleBuffer.h` declarations and comments.
 
 The local Swift overlay exposes `CMBlockBufferProtocol`, `CMBlockBuffer.Slice`,
 range subscripts, `withContiguousStorage`, `withUnsafeMutableBytes`,
@@ -192,8 +198,9 @@ Failed or invalid data is never exposed as an empty successful sample.
 `CMAttachmentBearerAttachments` storage is metadata owned by the sample buffer
 and is separate from attachments on the retained Core Video image buffer. The
 current portable value contract supports Boolean, signed and unsigned integer,
-floating-point, and string values. It does not pretend to accept Apple's
-complete `CFType` value space.
+floating-point, string, array, and string-keyed dictionary values. Collections
+are recursively typed and use Swift copy-on-write storage. It does not pretend
+to accept Apple's complete `CFType` value space.
 
 The Swift overlay supports `attachments[key]`, `propagated`,
 `nonPropagated`, `merge(_:mode:)`, `removeAll()`, and
@@ -214,10 +221,44 @@ A timing-only sample-buffer copy retains the same image-buffer owner, creates
 independent attachment storage, and copies only propagatable entries. Later
 mutation of either attachment storage cannot change the other.
 
-Apple's `CMSampleBufferGetSampleAttachmentsArray` is a different contract: it
-exposes one mutable attachment dictionary for every individual sample. That API
-is not represented by the buffer-level bearer storage and remains pending until
-multi-sample storage and mutation ownership are designed together.
+Per-sample attachments use separate storage from the buffer-level bearer.
+`CMSampleBufferGetSampleAttachmentsArray(_:createIfNecessary:)` returns `nil`
+until first materialization when requested with `false`. A `true` request or the
+`sampleAttachments` property creates one fixed dictionary storage per sample and
+caches it. The array view cannot change sample count; each dictionary remains
+mutable through its reference-backed value view.
+
+Apple nests `SampleAttachmentsArray` and
+`PerSampleAttachmentsDictionary` under its concrete `CMSampleBuffer` type.
+OpenCoreMedia's `CMSampleBuffer` is a protocol, and Swift does not permit these
+nested concrete types on a protocol extension. The portable spellings are
+`CMSampleAttachmentsArray` and `CMSampleAttachmentDictionary`; the property,
+subscript, standard key raw values, lazy creation, and direct mutation shape
+remain aligned.
+
+`CMSampleAttachmentDictionary` is a `Sequence`. Iteration obtains one
+copy-on-write dictionary snapshot so a lock is never held across caller code.
+`count` and `isEmpty` read under the storage lock without exporting that
+snapshot. The standard key surface contains all 13 keys exposed by the reviewed
+macOS 27 Swift overlay.
+
+Apple's array property also has a setter. The portable property is get-only:
+replacing it with an array originating from a different sample count cannot
+report a typed failure through a Swift property setter. Callers mutate each
+fixed dictionary directly. A future whole-array replacement operation requires
+an explicitly throwing contract rather than a trapping or silently truncated
+setter.
+
+A timing-only copy leaves per-sample storage unmaterialized if the source never
+materialized it. Otherwise it creates independent dictionary storage from
+each source dictionary directly into one destination owner array; there is no
+outer snapshot array. Recursive values retain copy-on-write backing until
+either copy mutates. Pixel and block payload ownership is unaffected.
+
+The optional per-sample owner array is stored inside the sample buffer's
+existing state. An unused sample therefore does not allocate a separate
+attachment coordinator. Dictionary owners are created only on first requested
+materialization.
 
 ## Ownership and zero-copy contract
 
@@ -228,10 +269,12 @@ multi-sample storage and mutation ownership are designed together.
 4. Timing-only copies do not copy media payload.
 5. Timing-only copies use independent metadata storage and propagate only
    attachments marked `.shouldPropagate`.
-6. Borrowed pointers and ranges do not cross ownership or concurrency boundaries.
-7. Large payloads are not converted to `Array`, `Data`, or `String` inside the
+6. Per-sample dictionary arrays are allocated only on first requested access;
+   timing copies preserve their materialized or unmaterialized state.
+7. Borrowed pointers and ranges do not cross ownership or concurrency boundaries.
+8. Large payloads are not converted to `Array`, `Data`, or `String` inside the
    routing path.
-8. A required contiguous copy is visible in the operation and documented.
+9. A required contiguous copy is visible in the operation and documented.
 
 Short in-memory state is protected with `Mutex`. Ordered readiness operations that
 can suspend use an actor. `await` never occurs inside `withLock`.
@@ -276,9 +319,10 @@ failure instead of a precondition.
 
 Apple attachment values may be any Core Foundation object. OpenCoreMedia has no
 CoreFoundation dependency on shared targets, so `CMAttachmentValue` is a typed,
-portable value set. Composite values, byte payloads, and platform-object boxes
-must gain explicit ownership and Sendable contracts before being added; callers
-must not encode unsupported values into lossy strings.
+portable value set. Recursive arrays and string-keyed dictionaries are
+supported. Byte payloads and platform-object boxes must gain explicit ownership
+and Sendable contracts before being added; callers must not encode unsupported
+values into lossy strings or ad hoc byte arrays.
 
 ## Error contract
 
@@ -311,8 +355,9 @@ empty sample unless Apple documents that exact result.
 6. Implement `CMSampleTimingInfo` and ready sample buffers.
    **Image-buffer Smoke complete.**
 7. Implement readiness, failure, invalidation, and attachments.
-   **State and buffer-level attachment Smokes complete; per-sample attachments
-   and composite values pending.**
+   **State, buffer-level attachments, per-sample dictionaries, and recursive
+   attachment collection Smokes complete for the image-sample path. Byte values,
+   platform objects, and multi-sample payload carriers remain pending.**
 8. Implement clocks, timebases, and queues.
 9. Add cross-platform conformance fixtures using OpenCoreVideo buffers.
 
