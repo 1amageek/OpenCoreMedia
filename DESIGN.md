@@ -488,7 +488,10 @@ empty sample unless Apple documents that exact result.
 
 1. Record the initial Apple API inventory and signature sources. **Smoke complete.**
 2. Implement `CMTime` and differential tests against Apple Core Media.
-   **Basic behavior complete; broad differential fixtures pending.**
+   **Broad fixed differential behavior is complete for arithmetic overflow,
+   scale conversion, epoch arithmetic and comparison, mapping, and folding.
+   Exhaustive generated arithmetic differential fuzzing remains outside the
+   completed milestone.**
 3. Implement time ranges and mappings.
    **Range, mapping, clamp, and fold behavior complete.**
 4. Implement media identifiers and immutable format descriptions.

@@ -311,14 +311,19 @@ implementation.
   development snapshot compiler on 2026-07-25.
 - Time mapping differential:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
-  -maximum-test-execution-time-allowance 30
+  -maximum-test-execution-time-allowance 60
+  -only-testing:OpenCoreMediaTests/CMTimeSmokeTests
+  -only-testing:OpenCoreMediaTests/CMTimeRangeSmokeTests
   -only-testing:OpenCoreMediaTests/CMTimeMappingSmokeTests
   -only-testing:OpenCoreMediaTests/CMTimeMappingAppleDifferentialTests`
-  — passed on 2026-07-24, including raw versus validating construction,
+  — passed 23 tests on 2026-07-25, including special values, checked
+  arithmetic, scale conversion, exact comparison, range behavior, raw versus
+  validating mapping construction,
   endpoint preservation, nonintegral nanosecond mapping, epoch failures,
   infinite ranges, clamping, and positive/negative folding. Overflow,
-  large-timescale, conversion, and epoch arithmetic differential fixtures
-  passed on 2026-07-25.
+  large-timescale conversion, and epoch arithmetic/comparison differential
+  fixtures ran against Apple Core Media. Exhaustive generated arithmetic
+  differential fuzzing remains outside the completed milestone.
 - Scalar timing-storage regression:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
