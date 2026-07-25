@@ -33,6 +33,20 @@ The second Smoke additionally requires:
 - explicit copy naming and bounds for copy and replace operations;
 - exactly-once external release after the final buffer or slice owner dies.
 
+The segmented block-buffer slice additionally requires:
+
+- empty construction with a validated, bounded-reservation capacity hint;
+- external segment append without copying payload bytes;
+- buffer and slice references sharing the original leases;
+- range-specific contiguity across segment boundaries;
+- copy, replace, and fill operations spanning segments without an intermediate
+  payload;
+- explicit contiguous materialization with allocator and deallocator
+  contracts;
+- no allocator call when an already-contiguous range can share its lease;
+- exactly-once release for every appended and materialized lease;
+- Apple differential behavior and documented portable copy boundaries.
+
 The buffer-level attachment slice additionally requires:
 
 - Apple-shaped Swift overlay and get, copy, set, remove, and propagate
@@ -117,9 +131,14 @@ The per-sample attachment slice additionally requires:
 - [x] Scoped immutable and mutable borrows
 - [x] Explicit `copyDataBytes`, `replaceDataBytes`, and `fillDataBytes`
 - [x] Exactly-once external deallocation
-- [ ] Multiple memory segments and append
-- [ ] Explicit contiguous materialization
+- [x] Empty construction and bounded segment-capacity hint
+- [x] Multiple external memory segments and append
+- [x] Zero-copy buffer and slice reference append
+- [x] Range-specific contiguity
+- [x] Cross-segment copy, replace, and fill
+- [x] Explicit contiguous materialization
 - [ ] Deferred allocation
+- [ ] Allocator-backed append and construction overloads
 
 ## Copy boundary
 
@@ -159,11 +178,17 @@ per-sample dictionary. The target runtime supplies the Mutex implementation;
 no locks are nested, and no `await` or media-byte work occurs while a lock is
 held.
 
-`CMBlockBuffer` stores an external-memory lease rather than payload bytes.
-References share the lease and slices retain an owner plus range. Borrow
-closures receive the original pointer, adjusted only by their range offset.
-Only `copyDataBytes` and `replaceDataBytes` copy payload bytes, and both expose
-their required bounds in typed failures. `fillDataBytes` mutates in place.
+`CMBlockBuffer` stores segment metadata over external-memory leases rather than
+payload bytes. References snapshot segment views and slices retain an owner plus
+range. Borrow closures receive an original lease pointer adjusted only by their
+range offset. Mutable offset access borrows only the tail of the containing
+segment. `copyDataBytes` and `replaceDataBytes` preflight physical overlap, then
+iterate twice over the retained segment table without a temporary view array and
+copy directly between disjoint caller memory and each overlapping segment;
+`fillDataBytes` mutates each segment in place. `makeContiguous` shares a
+one-segment lease unless `.alwaysCopyData` is requested, and otherwise performs
+one allocator-visible payload copy. Raw pointers returned to borrow closures
+must not be stored or returned.
 
 ## Apple API review evidence
 
@@ -210,6 +235,13 @@ Reviewed with `remark` on 2026-07-24:
 - `CMBlockBufferProtocol.copyDataBytes`
 - `CMBlockBufferProtocol.replaceDataBytes`
 - `CMBlockBufferProtocol.fillDataBytes`
+- `CMBlockBuffer.init(capacity:flags:)`
+- `CMBlockBuffer.init(bufferReference:flags:)`
+- `CMBlockBuffer.append(buffer:deallocator:flags:)`
+- `CMBlockBuffer.append(bufferReference:flags:)`
+- `CMBlockBuffer.assureBlockMemory()`
+- `CMBlockBufferProtocol.isContiguous`
+- `CMBlockBufferProtocol.makeContiguous(allocator:deallocator:flags:)`
 - `CMAttachment`
 - `CMAttachmentBearerProtocol`
 - `CMAttachmentBearerAttachments`
@@ -244,7 +276,7 @@ implementation.
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests
   SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
-  — passed 43 behavior tests in 9 suites with the Swift 6.4 development
+  — passed 61 behavior tests in 10 suites with the Swift 6.4 development
   snapshot compiler on 2026-07-25.
 - Time mapping differential:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
@@ -286,6 +318,13 @@ implementation.
   --target OpenCoreMedia`
   — passed after `swift package clean` with the matching Swift 6.4
   development snapshot compiler and SDK on 2026-07-25.
+- WASM runtime:
+  `./scripts/run-wasm-smoke.sh`
+  — built the smoke executable with the regular fixed Swift 6.4 WASM SDK and
+  executed it through Node WASI on 2026-07-25. It runs the same segmented
+  append, reference, cross-segment mutation/copy, overlap-safe failure,
+  materialization, allocation failure, and lease-release contracts as the
+  Embedded runtime fixture.
 - Embedded WASM:
   `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
   --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
@@ -302,11 +341,14 @@ implementation.
   Embedded SDK and executed it through Node WASI on 2026-07-25. The smoke
   validates Mutex-protected not-ready and typed-failure recovery, buffer-level
   propagation, lazy per-sample creation, recursive mutation, throwing scoped
-  borrows, timing-copy metadata independence, and unchanged image-buffer
-  identity. The script records the toolchain, Swift SDK, target triple, and
-  Embedded Synchronization module identifiers. Node WASI is a single-threaded
-  execution fixture; Native concurrent state, buffer-level attachment, and
-  per-sample mutation/copy tests provide the current contention test.
+  borrows, segmented append, noncontiguous typed failure, cross-segment
+  fill/copy/replace, zero-copy references, forced-copy materialization,
+  allocation failure, per-lease release counts, timing-copy metadata
+  independence, and unchanged image-buffer identity. The script records the
+  toolchain, Swift SDK, target triple, and Embedded Synchronization module
+  identifiers. Node WASI is a single-threaded execution fixture; Native
+  concurrent state, buffer-level attachment, and per-sample mutation/copy tests
+  provide the current contention test.
 - Native Thread Sanitizer:
   `xcodebuild test -quiet -scheme OpenCoreMedia-Package
   -destination 'platform=macOS'
@@ -317,11 +359,38 @@ implementation.
   — passed on 2026-07-25, exercising concurrent readiness, lazy
   materialization, buffer-level snapshot/propagation, and per-sample
   mutation/copy paths under Thread Sanitizer.
+- Segmented block buffers:
+  `xcodebuild test -quiet -scheme OpenCoreMedia-Package
+  -destination 'platform=macOS'
+  -maximum-test-execution-time-allowance 60
+  -only-testing:OpenCoreMediaTests/CMBlockBufferSmokeTests
+  -only-testing:OpenCoreMediaTests/CMBlockBufferAppleDifferentialTests
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  — passed on 2026-07-25, covering zero-copy append/reference behavior,
+  reference flags, range-specific contiguity, segment-tail mutable borrows,
+  cross-segment copy/fill/replace, alias rejection, explicit range-limited
+  materialization, allocation and length failure, per-lease release, and
+  macOS 27 differential behavior including documented zero-length overlay
+  differences.
+- Native Address Sanitizer:
+  `xcodebuild build-for-testing -scheme OpenCoreMedia-Package
+  -destination 'platform=macOS,arch=arm64' -enableAddressSanitizer YES
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`,
+  followed by `xcodebuild test-without-building` for
+  `CMBlockBufferSmokeTests` and `CMBlockBufferAppleDifferentialTests`
+  — passed on 2026-07-25. The Xcode beta bundle initially embedded its
+  `apple_clang_2100` ASan runtime while the fixed snapshot instrumentation
+  requires `__asan_version_mismatch_check_v8`. The successful run replaced the
+  disposable test bundle's runtime with the snapshot's matching
+  `libclang_rt.asan_osx_dynamic.dylib` and inserted that exact library through
+  the generated `.xctestrun` environment before process launch.
 
 ## Explicitly not implemented
 
-- segmented or deferred-allocation `CMBlockBuffer`
-- `CMBlockBuffer.append`, `makeContiguous`, and Foundation `dataBytes`
+- deferred-allocation `CMBlockBuffer`
+- allocator-backed block construction and append overloads
+- raw-buffer slice append/initializer overloads
+- Foundation `dataBytes`
 - attachment byte values and arbitrary platform-object values
 - multi-sample payload carriers
 - asynchronous data readiness callbacks

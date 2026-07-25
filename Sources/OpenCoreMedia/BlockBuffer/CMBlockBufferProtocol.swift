@@ -1,3 +1,8 @@
+/// A logical byte range retained by a `CMBlockBuffer` owner.
+///
+/// Conforming types must keep `startIndex...endIndex` within `owner` and must
+/// not invert the indices. Throwing operations validate this invariant before
+/// accessing storage.
 public protocol CMBlockBufferProtocol {
     var owner: CMBlockBuffer { get }
     var startIndex: Int { get }
@@ -6,24 +11,43 @@ public protocol CMBlockBufferProtocol {
 
 extension CMBlockBufferProtocol {
     public var dataLength: Int {
-        endIndex - startIndex
+        precondition(
+            startIndex >= 0
+                && endIndex >= startIndex
+                && endIndex <= owner.endIndex,
+            "CMBlockBufferProtocol indices must remain within the owner"
+        )
+        return endIndex - startIndex
     }
 
     public var isContiguous: Bool {
-        owner.isStorageContiguous
+        owner.isStorageContiguous(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
     }
 
     public func slice(
         _ bounds: Range<Int>
     ) throws(CMBlockBufferError) -> CMBlockBuffer.Slice {
-        try owner.validatedSlice(
+        let validRange = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        return try owner.validatedSlice(
             bounds,
-            within: startIndex..<endIndex
+            within: validRange
         )
     }
 
     public subscript(bounds: Range<Int>) -> CMBlockBuffer.Slice {
-        owner.preconditionedSlice(
+        precondition(
+            startIndex >= 0
+                && endIndex >= startIndex
+                && endIndex <= owner.endIndex,
+            "CMBlockBufferProtocol indices must remain within the owner"
+        )
+        return owner.preconditionedSlice(
             bounds,
             within: startIndex..<endIndex
         )
@@ -63,14 +87,26 @@ extension CMBlockBufferProtocol {
         self[startIndex..<endIndex]
     }
 
+    /// Borrows this view's contiguous storage for the duration of `body`.
+    ///
+    /// The buffer and every pointer derived from it are valid only during
+    /// `body`. Returning or storing those pointers violates this API's
+    /// ownership contract.
     public func withContiguousStorage<R>(
         _ body: (UnsafeRawBufferPointer) throws -> R
     ) throws -> R {
+        let range = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        guard !range.isEmpty else {
+            throw CMBlockBufferError.emptyBuffer
+        }
         guard isContiguous else {
             throw CMBlockBufferError.nonContiguousStorage
         }
         return try owner.withReadBytes(
-            in: startIndex..<endIndex,
+            in: range,
             body
         )
     }
@@ -78,44 +114,82 @@ extension CMBlockBufferProtocol {
     public func copyDataBytes(
         to destination: UnsafeMutableRawBufferPointer
     ) throws(CMBlockBufferError) {
-        guard destination.count >= dataLength else {
+        let range = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        guard !range.isEmpty else {
+            throw .invalidLength(0)
+        }
+        guard destination.count >= range.count else {
             throw .destinationTooSmall(
-                required: dataLength,
+                required: range.count,
                 actual: destination.count
             )
         }
 
-        owner.withReadBytes(in: startIndex..<endIndex) { source in
-            let target = UnsafeMutableRawBufferPointer(
-                rebasing: destination[..<dataLength]
-            )
-            target.copyMemory(from: source)
-        }
+        try owner.copyBytes(
+            in: range,
+            to: destination
+        )
     }
 
     public func replaceDataBytes(
         with sourceBytes: UnsafeRawBufferPointer
     ) throws(CMBlockBufferError) {
-        guard sourceBytes.count <= dataLength else {
+        let range = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        guard !sourceBytes.isEmpty else {
+            throw .invalidLength(0)
+        }
+        guard sourceBytes.count <= range.count else {
             throw .sourceTooLarge(
-                maximum: dataLength,
+                maximum: range.count,
                 actual: sourceBytes.count
             )
         }
 
-        owner.withWriteBytes(
-            in: startIndex..<(startIndex + sourceBytes.count)
-        ) { destination in
-            destination.copyMemory(from: sourceBytes)
-        }
+        try owner.replaceBytes(
+            in: range.lowerBound..<(range.lowerBound + sourceBytes.count),
+            with: sourceBytes
+        )
     }
 
-    public func fillDataBytes(with fillByte: UInt8) {
-        owner.withWriteBytes(in: startIndex..<endIndex) { destination in
-            _ = destination.initializeMemory(
-                as: UInt8.self,
-                repeating: fillByte
-            )
+    public func fillDataBytes(
+        with fillByte: UInt8
+    ) throws(CMBlockBufferError) {
+        let range = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        guard !owner.isEmpty else {
+            throw .emptyBuffer
         }
+        guard !range.isEmpty else {
+            return
+        }
+        try owner.fillBytes(
+            in: range,
+            with: fillByte
+        )
+    }
+
+    public func makeContiguous(
+        allocator: @escaping CMBlockBuffer.CustomBlockAllocator,
+        deallocator: @escaping CMBlockBuffer.CustomBlockDeallocator,
+        flags: CMBlockBuffer.Flags = []
+    ) throws(CMBlockBufferError) -> CMBlockBuffer {
+        let range = try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+        return try owner.contiguousBuffer(
+            in: range,
+            allocator: allocator,
+            deallocator: deallocator,
+            flags: flags
+        )
     }
 }

@@ -5,11 +5,13 @@
 This document is the normative design for the package. The package has completed
 behavior Smokes for rational time, basic time ranges, immutable video
 descriptions, ready image sample buffers, and a contiguous zero-copy block
-buffer owner/view path. Buffer-level attachment operations and timing-copy
-propagation are also implemented. The current image-sample path additionally
-provides lazy per-sample attachment dictionaries and their timing-copy behavior.
-These milestones are intentionally narrower than Core Media API compatibility;
-the remaining sequence below is still required.
+buffer owner/view path. Segmented block assembly, zero-copy buffer references,
+cross-segment copy/fill/replace operations, and explicit contiguous
+materialization are also implemented. Buffer-level attachment operations and
+timing-copy propagation are implemented. The current image-sample path
+additionally provides lazy per-sample attachment dictionaries and their
+timing-copy behavior. These milestones are intentionally narrower than Core
+Media API compatibility; the remaining sequence below is still required.
 
 ## Apple API review
 
@@ -43,6 +45,12 @@ The per-sample attachment slice refreshed the macOS 27 SDK symbol graph and read
 `CMSampleBufferGetSampleAttachmentsArray(_:createIfNecessary:)` plus the Sample
 Attachment Keys documentation with `remark` on 2026-07-25. It also read the
 installed `CMSampleBuffer.h` declarations and comments.
+
+The segmented block-buffer slice refreshed that symbol graph on 2026-07-25,
+read the installed `CMBlockBuffer.h`, and reviewed `init(capacity:flags:)`,
+`init(bufferReference:flags:)`, `append(buffer:deallocator:flags:)`,
+`append(bufferReference:flags:)`, `assureBlockMemory()`, `isContiguous`,
+`withContiguousStorage`, and `makeContiguous` with `remark`.
 
 The local Swift overlay exposes `CMBlockBufferProtocol`, `CMBlockBuffer.Slice`,
 range subscripts, `withContiguousStorage`, `withUnsafeMutableBytes`,
@@ -128,32 +136,65 @@ It describes samples but never owns their media payload.
 ### Block buffer
 
 A block buffer owns or retains one or more memory segments and exposes ranges
-without forcing them into contiguous storage. Contiguous materialization is
-explicit. Externally owned segments have exactly-once release semantics.
+without forcing them into contiguous storage. Each segment is a lease plus a
+range within that lease. Adjacent ranges from the same lease are coalesced as
+metadata; media bytes are not moved. Externally owned segments have exactly-once
+release semantics.
 
-The current Smoke implements one externally supplied contiguous memory segment.
-`CMBlockBuffer` retains a private memory lease and `CMBlockBuffer.Slice` retains
-its `owner` plus an absolute byte range. `init(referencing:)` creates another
-buffer owner for the same lease. Consequently, destroying the original buffer
-does not release memory while a reference or slice remains alive.
+`init(capacity:flags:)` creates an empty segment table. Capacity is a
+`UInt32`-bounded segment-count hint. The portable implementation bounds eager
+reservation so an untrusted but valid large hint cannot force a process-wide
+allocation before any segment exists.
+`append(buffer:deallocator:flags:)` adds an external lease.
+`append(bufferReference:flags:)` and `init(bufferReference:flags:)` snapshot
+segment views from another buffer or slice and retain the same leases. Reference
+operations accept `.assureMemoryNow`, `.dontOptimizeDepth`, and
+`.permitEmptyReference`. The segment table is always flat, so depth suppression
+does not require a second representation.
+`init(referencing:)` snapshots the current segment table. Later segment appends
+to the source therefore do not change an existing reference, while byte
+mutations remain visible through every lease-sharing reference.
+
+`CMBlockBuffer.Slice` retains its `owner` plus an absolute logical byte range.
+Cross-segment copy, replace, and fill operations iterate the overlapping
+segments directly without assembling an intermediate payload or allocating a
+temporary segment-view array.
 
 Borrow APIs create raw-buffer views only for the duration of their closure.
-They neither return a stored pointer nor materialize payload bytes. The
-following operations have intentionally distinct copy behavior:
+Callers must not return or store the raw buffer, its base address, or a derived
+pointer. OpenCoreMedia retains the owner during the call but cannot make an
+escaped unsafe pointer valid after the final owner is released. Borrow APIs
+never materialize payload bytes. The following operations have intentionally
+distinct copy behavior:
 
 | Operation | Payload behavior |
 |---|---|
 | `withContiguousStorage` | immutable scoped borrow |
-| `withUnsafeMutableBytes` | mutable scoped borrow |
+| `withUnsafeMutableBytes` | mutable scoped borrow of the segment tail at the requested offset |
 | range subscript / `slice(_:)` | owner plus range view |
 | `fillDataBytes` | in-place mutation |
 | `replaceDataBytes` | explicit source-to-storage copy |
 | `copyDataBytes` | explicit storage-to-destination copy |
+| `makeContiguous` on one segment | zero-copy lease reference |
+| `makeContiguous` on multiple segments | one explicit payload copy |
 
-Appending segments, deferred allocation, and `makeContiguous` are not
-implemented. Until segmented storage exists, every constructible block buffer
-is genuinely contiguous; there is no fallback that reports segmented storage
-as contiguous.
+`isContiguous` is range-specific: a slice contained by one lease range is
+contiguous even when its owner has multiple segments. `withContiguousStorage`
+requires the whole represented range to be nonempty and contiguous.
+`withUnsafeMutableBytes(atOffset:)` instead returns only the remaining bytes in
+the segment containing that offset, matching Apple's data-pointer behavior.
+Neither operation hides a temporary allocation. Callers choose
+`makeContiguous` when a copy is acceptable.
+
+Cross-segment copy and replacement reject a caller buffer that overlaps any
+represented lease before the first byte is changed. This prevents earlier
+segment writes from corrupting bytes that a later segment has not yet read.
+The caller must use disjoint storage or explicitly materialize a separate
+buffer.
+
+Append operations remain owner-isolated and non-Sendable, matching Apple's
+explicit statement that append is not thread-safe. Deferred allocation and the
+allocator-backed append/initializer overloads remain unimplemented.
 
 ### Sample buffer
 
@@ -320,6 +361,27 @@ Embedded WASM baseline, matching Apple's Swift overlay. The borrow remains
 scoped on every target; the pointer cannot escape through OpenCoreMedia-owned
 storage.
 
+Apple's `withContiguousStorage` currently creates temporary contiguous storage
+for a segmented range. OpenCoreMedia intentionally returns
+`nonContiguousStorage` instead, because an implicit full-payload copy would
+violate the package's visible-copy rule. `makeContiguous` is the explicit
+portable materialization boundary.
+
+The macOS 27 beta implementation rejects an empty
+`init(bufferReference:flags:)` even with `.permitEmptyReference`, while its
+public documentation says that flag permits the operation. OpenCoreMedia follows
+the documented contract and accepts the empty reference.
+
+The macOS 27 beta overlay inconsistently reports `dataLength == 0` for a
+zero-length slice but passes that zero to C APIs as a "remaining bytes"
+sentinel. Consequently, its `isContiguous`, `fillDataBytes`, and
+`makeContiguous` operate on the range from the slice offset to the owner end.
+OpenCoreMedia preserves Swift range-value semantics instead: an interior
+zero-length view is contiguous at its point, fill is a no-op, and materializing
+zero bytes is a typed failure. Apple differential tests record all three
+intentional differences. An actually empty owner remains noncontiguous and its
+byte operations fail.
+
 Apple range subscripts are nonthrowing and enforce valid collection indices.
 OpenCoreMedia preserves those subscripts for valid basic use and additionally
 offers `slice(_:) throws(CMBlockBufferError)` when the caller needs a typed range
@@ -359,7 +421,9 @@ empty sample unless Apple documents that exact result.
 4. Implement media identifiers and immutable format descriptions.
    **Video Smoke complete.**
 5. Implement segmented `CMBlockBuffer`.
-   **Contiguous owner/view Smoke complete; segmentation pending.**
+   **Segment assembly, zero-copy references, range-aware contiguity, explicit
+   materialization, and cross-segment byte operations complete. Deferred
+   allocation remains pending.**
 6. Implement `CMSampleTimingInfo` and ready sample buffers.
    **Image-buffer Smoke complete.**
 7. Implement readiness, failure, invalidation, and attachments.

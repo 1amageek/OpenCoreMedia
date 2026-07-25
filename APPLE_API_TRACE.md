@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | `CMTime` | `CMTime.h` | Rational values, flags, arithmetic, rounding, epochs | Partial | Broader overflow and epoch differential matrix |
 | `CMTimeRange` and `CMTimeMapping` | `CMTimeRange.h` | Ranges, mapping, clamp, fold, affine conversion | Implemented | Apple differential fixtures |
-| `CMBlockBuffer` | `CMBlockBuffer.h` | One contiguous external owner, references, slices, explicit copy operations | Partial | Segments, append, deferred allocation, contiguous materialization |
+| `CMBlockBuffer` | `CMBlockBuffer.h` | Segmented external leases, append, buffer/slice references, range-aware contiguity, cross-segment byte operations, explicit materialization | Partial | Deferred allocation, allocator-backed construction/append, raw-buffer slice overloads |
 | `CMFormatDescription` | `CMFormatDescription.h` | Immutable video description | Partial | Audio, metadata, codec extensions |
 | `CMSampleBuffer` | `CMSampleBuffer.h` | One-image sample, timing, readiness, invalidation, timing-only copy | Partial | Multi-sample, block payload, size arrays, callbacks |
 | Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Swift bearer overlay, recursively typed portable values, modes, C-derived operations, and timing-copy propagation | Partial | Byte values, platform-object adapters, and `CMBlockBuffer` bearer conformance |

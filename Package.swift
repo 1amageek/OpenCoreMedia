@@ -34,6 +34,10 @@ let package = Package(
                 )
             ]
         ),
+        .executableTarget(
+            name: "OpenCoreMediaBlockBufferSmoke",
+            dependencies: ["OpenCoreMedia"]
+        ),
         .testTarget(
             name: "OpenCoreMediaTests",
             dependencies: ["OpenCoreMedia"]

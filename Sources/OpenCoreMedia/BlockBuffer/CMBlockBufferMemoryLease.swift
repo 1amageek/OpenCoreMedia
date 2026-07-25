@@ -38,4 +38,33 @@ final class CMBlockBufferMemoryLease {
         )
         return try body(bytes)
     }
+
+    func overlaps(
+        _ externalBytes: UnsafeRawBufferPointer,
+        in range: Range<Int>
+    ) -> Bool {
+        guard !externalBytes.isEmpty,
+              !range.isEmpty,
+              let externalBaseAddress = externalBytes.baseAddress
+        else {
+            return false
+        }
+
+        let leaseStart = UInt(
+            bitPattern: pointer.advanced(by: range.lowerBound)
+        )
+        let externalStart = UInt(bitPattern: externalBaseAddress)
+        let (leaseEnd, leaseOverflow) = leaseStart.addingReportingOverflow(
+            UInt(range.count)
+        )
+        let (externalEnd, externalOverflow) =
+            externalStart.addingReportingOverflow(
+                UInt(externalBytes.count)
+            )
+
+        guard !leaseOverflow, !externalOverflow else {
+            return true
+        }
+        return leaseStart < externalEnd && externalStart < leaseEnd
+    }
 }

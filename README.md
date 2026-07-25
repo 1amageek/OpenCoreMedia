@@ -8,15 +8,18 @@ The implemented behavior Smokes cover rational `CMTime`, `CMTimeRange`,
 format descriptions, zero-copy image sample buffers backed by OpenCoreVideo,
 buffer-level attachments with propagation modes, lazily materialized per-sample
 attachment dictionaries, recursively typed attachment collections, and a
-contiguous zero-copy `CMBlockBuffer` owner/view path. External byte storage is
-borrowed through scoped raw-buffer closures and released exactly once after its
-last buffer or slice owner is destroyed.
+segmented zero-copy `CMBlockBuffer` owner/view path. External byte leases can be
+appended or referenced without moving payload bytes. Cross-segment byte
+operations traverse those leases directly, and contiguous materialization is an
+explicit allocator-visible copy. Overlapping caller memory is rejected before
+segmented copy or replacement begins. Every lease is released exactly once
+after its last buffer or slice owner is destroyed.
 
-This is not complete Core Media API compatibility. Segmented block buffers,
-attachment byte payloads and platform-object adapters, multi-sample payload
-carriers, asynchronous readiness, clocks, timebases, and queues remain
-explicitly unimplemented. See [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md)
-for current evidence.
+This is not complete Core Media API compatibility. Deferred block allocation,
+allocator-backed append overloads, attachment byte payloads and platform-object
+adapters, multi-sample payload carriers, asynchronous readiness, clocks,
+timebases, and queues remain explicitly unimplemented. See
+[IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md) for current evidence.
 
 ## Supported production targets
 
@@ -46,6 +49,7 @@ xcodebuild test \
 "$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift" build \
   --swift-sdks-path "$HOME/Library/org.swift.swiftpm/swift-sdks" \
   --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
+./scripts/run-wasm-smoke.sh
 ./scripts/run-embedded-smoke.sh
 ```
 
