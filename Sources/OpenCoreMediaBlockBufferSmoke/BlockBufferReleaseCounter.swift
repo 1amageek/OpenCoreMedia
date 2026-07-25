@@ -1,7 +1,13 @@
-final class OpenCoreMediaBlockBufferReleaseCounter {
-    private(set) var count = 0
+import Synchronization
+
+final class OpenCoreMediaBlockBufferReleaseCounter: Sendable {
+    private let storedCount = Mutex(0)
+
+    var count: Int {
+        storedCount.withLock { $0 }
+    }
 
     func record() {
-        count += 1
+        storedCount.withLock { $0 += 1 }
     }
 }

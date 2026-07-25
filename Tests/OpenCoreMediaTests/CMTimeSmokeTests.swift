@@ -60,12 +60,12 @@ struct CMTimeSmokeTests {
         let overflow = maximum + maximum
 
         #expect(overflow.isPositiveInfinity)
-        #expect(overflow.hasBeenRounded)
+        #expect(overflow.hasBeenRounded == false)
 
         let minimum = CMTime(value: .min, timescale: 1)
         let negativeOverflow = minimum + minimum
         #expect(negativeOverflow.isNegativeInfinity)
-        #expect(negativeOverflow.hasBeenRounded)
+        #expect(negativeOverflow.hasBeenRounded == false)
     }
 
     @Test("Scale conversion applies explicit rounding")

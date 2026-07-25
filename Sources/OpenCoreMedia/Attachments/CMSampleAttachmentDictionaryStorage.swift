@@ -4,10 +4,10 @@ final class CMSampleAttachmentDictionaryStorage:
     CMPlatformConcurrencyContract,
     Sendable
 {
-    private let values: Mutex<[String: CMAttachmentValue]>
+    private let values: CMStateLock<[String: CMAttachmentValue]>
 
     init(_ values: [String: CMAttachmentValue] = [:]) {
-        self.values = Mutex(values)
+        self.values = CMStateLock(values)
     }
 
     func value(for key: String) -> CMAttachmentValue? {

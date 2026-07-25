@@ -1,13 +1,14 @@
-public protocol CMAttachmentBearerProtocol:
+public protocol CMAttachmentStorageBearerProtocol:
     AnyObject,
     CMPlatformConcurrencyContract
 {
     var attachments: CMAttachmentBearerAttachments { get }
-
-    func propagateAttachments<
-        Destination: CMAttachmentBearerProtocol
-    >(to destination: borrowing Destination)
 }
+
+public protocol CMAttachmentBearerProtocol:
+    CMAttachmentStorageBearerProtocol,
+    CMPlatformConcurrencyContract
+{}
 
 extension CMAttachmentBearerProtocol {
     public func propagateAttachments<

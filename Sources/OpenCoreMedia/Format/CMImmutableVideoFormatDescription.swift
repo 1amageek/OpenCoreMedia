@@ -21,8 +21,8 @@ public final class CMImmutableVideoFormatDescription:
         self.pixelFormat = pixelFormat
     }
 
-    public func matchesImageBuffer<Buffer: CVPixelBuffer>(
-        _ imageBuffer: borrowing Buffer
+    public func matchesImageBuffer(
+        _ imageBuffer: borrowing any CVPixelBuffer
     ) -> Bool {
         imageBuffer.dimensions == dimensions
             && imageBuffer.pixelFormat == pixelFormat

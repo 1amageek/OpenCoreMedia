@@ -240,8 +240,15 @@ struct SampleBufferSmokeTests {
             _ = try sample.imageBuffer()
         }
 
-        try sample.setDataReadiness(.ready)
-        #expect(try sample.imageBuffer() === fixture.image)
+        #expect(throws: CMSampleBufferError.invalidReadinessTransition(
+            from: .failed(code: 19),
+            to: .ready
+        )) {
+            try sample.setDataReadiness(.ready)
+        }
+        #expect(throws: CMSampleBufferError.dataFailed(code: 19)) {
+            _ = try sample.imageBuffer()
+        }
 
         try sample.invalidate()
         try sample.invalidate()

@@ -12,15 +12,15 @@
 
 | Apple family | Header evidence | Open implementation | Status | Required evidence |
 |---|---|---|---|---|
-| `CMTime` | `CMTime.h` | Rational values, flags, arithmetic, rounding, epochs | Partial | Broader overflow and epoch differential matrix |
+| `CMTime` | `CMTime.h` | Rational values, flags, arithmetic, rounding, epochs | Partial | Exhaustive generated boundary differential fuzzing |
 | `CMTimeRange` and `CMTimeMapping` | `CMTimeRange.h` | Ranges, mapping, clamp, fold, affine conversion | Implemented | Apple differential fixtures |
-| `CMBlockBuffer` | `CMBlockBuffer.h` | Segmented external leases, append, buffer/slice references, range-aware contiguity, cross-segment byte operations, explicit materialization | Partial | Deferred allocation, allocator-backed construction/append, raw-buffer slice overloads |
+| `CMBlockBuffer` | `CMBlockBuffer.h` | Segmented external/deferred leases, allocator construction/append, raw-memory ranges, references, byte operations, explicit materialization | Implemented portable surface | Broader allocator-timing differential fixtures |
 | `CMFormatDescription` | `CMFormatDescription.h` | Immutable video description | Partial | Audio, metadata, codec extensions |
-| `CMSampleBuffer` | `CMSampleBuffer.h` | One-image sample, timing, readiness, invalidation, timing-only copy | Partial | Multi-sample, block payload, size arrays, callbacks |
-| Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Swift bearer overlay, recursively typed portable values, modes, C-derived operations, and timing-copy propagation | Partial | Byte values, platform-object adapters, and `CMBlockBuffer` bearer conformance |
-| Per-sample attachments | `CMSampleBuffer.h`, SDK Swift overlay | Lazy fixed-length array, mutable dictionary views, standard keys, typed Boolean access, and independent timing-copy metadata | Partial | Multi-sample payload carrier and broader codec-specific values |
-| Clocks and timebases | `CMSync.h`, `CMAudioClock.h`, `CMAudioDeviceClock.h` | No declaration | Planned | Injected source, rate, anchor, and ordering tests |
-| Timed and simple queues | `CMBufferQueue.h`, `CMSimpleQueue.h` | No declaration | Planned | Ordering, trigger, capacity, and shutdown tests |
+| `CMSampleBuffer` | `CMSampleBuffer.h` | Sendable one-image and multi-sample block carriers, compact timing/size layouts, shared revisioned readiness, invalidation, timing-only copy | Partial | Zero-sample events and broader audio/codec fixtures |
+| Buffer-level attachments | `CMAttachment.h`, `CMSampleBuffer.h` | Synchronized storage bearer, recursive values, owned bytes, explicit platform adapters, modes, C-derived operations, and propagation | Partial | Arbitrary Core Foundation object parity is intentionally outside shared storage |
+| Per-sample attachments | `CMSampleBuffer.h`, SDK Swift overlay | Lazy fixed-length array for image and multi-sample block carriers, mutable dictionary views, standard keys, and independent copy metadata | Implemented portable surface | Broader codec-specific values |
+| Clocks and timebases | `CMSync.h` | Injected clock source, invalidation, clock/timebase source chains, anchor/rate/effective-rate behavior | Partial | Timer scheduling and operating-system host-clock adapters |
+| Timed and simple queues | `CMBufferQueue.h`, `CMSimpleQueue.h` | Bounded timed queue ordering/readiness/end-of-data with callbacks outside locks, plus a bounded two-stack portable FIFO | Partial | Triggers and platform real-time lockless SPSC adapter |
 | Memory pools | `CMMemoryPool.h` | No declaration | Planned | Allocation and lifecycle tests |
 | Metadata and tags | `CMMetadata.h`, `CMTag*.h`, `CMTaggedBufferGroup.h` | No declaration | Planned | Typed tag and provenance behavior |
 | Text markup | `CMTextMarkup.h` | No declaration | Planned | Scope decision before implementation |

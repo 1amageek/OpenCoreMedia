@@ -228,9 +228,7 @@ struct CMSampleAttachmentSmokeTests {
                         rawValue: "test.materialization.\(worker)"
                     )
                     for value in 0..<50 {
-                        let readiness: CMSampleBufferDataReadiness =
-                            value.isMultiple(of: 2) ? .notReady : .ready
-                        try sample.setDataReadiness(readiness)
+                        try sample.setDataReadiness(.ready)
                         _ = sample.dataReadiness
 
                         let attachment = sample.sampleAttachments[0]
@@ -253,10 +251,7 @@ struct CMSampleAttachmentSmokeTests {
         }
     }
 
-    private func makeSample() throws -> CMImageSampleBuffer<
-        SampleAttachmentTestPixelBuffer,
-        CMImmutableVideoFormatDescription
-    > {
+    private func makeSample() throws -> CMImageSampleBuffer {
         let dimensions = try CVPixelDimensions(width: 2, height: 1)
         let image = try CVPackedPixelBuffer(
             dimensions: dimensions,

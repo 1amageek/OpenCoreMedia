@@ -4,6 +4,8 @@ public enum CMBlockBufferError: Error, Equatable, Sendable {
     case invalidCapacity(Int)
     case invalidLength(Int)
     case allocationFailed(length: Int)
+    case allocationInProgress
+    case concurrentAccessConflict
     case lengthOverflow
     case invalidRange(
         lowerBound: Int,
@@ -14,6 +16,11 @@ public enum CMBlockBufferError: Error, Equatable, Sendable {
     case destinationTooSmall(required: Int, actual: Int)
     case sourceTooLarge(maximum: Int, actual: Int)
     case overlappingMemory
+    case invalidBlockRange(
+        offsetToData: Int,
+        dataLength: Int,
+        blockLength: Int
+    )
     case unsupportedFlags(rawValue: UInt32)
     case nonContiguousStorage
 }

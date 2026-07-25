@@ -1,4 +1,4 @@
-struct CMBlockBufferSegment {
+struct CMBlockBufferSegment: Sendable {
     let lease: CMBlockBufferMemoryLease
     let leaseRange: Range<Int>
 

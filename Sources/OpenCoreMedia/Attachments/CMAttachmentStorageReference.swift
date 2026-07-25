@@ -4,10 +4,10 @@ final class CMAttachmentStorageReference:
     CMAttachmentStorage,
     Sendable
 {
-    private let values: Mutex<[String: CMAttachment]>
+    private let values: CMStateLock<[String: CMAttachment]>
 
     init() {
-        values = Mutex([:])
+        values = CMStateLock([:])
     }
 
     func attachment(for key: String) -> CMAttachment? {

@@ -1,4 +1,4 @@
-public func CMGetAttachment<Target: CMAttachmentBearerProtocol>(
+public func CMGetAttachment<Target: CMAttachmentStorageBearerProtocol>(
     _ target: borrowing Target,
     key: CMAttachmentKey
 ) -> CMAttachment? {
@@ -6,7 +6,7 @@ public func CMGetAttachment<Target: CMAttachmentBearerProtocol>(
 }
 
 public func CMCopyDictionaryOfAttachments<
-    Target: CMAttachmentBearerProtocol
+    Target: CMAttachmentStorageBearerProtocol
 >(
     target: borrowing Target,
     attachmentMode: CMAttachmentMode
@@ -29,7 +29,7 @@ public func CMCopyDictionaryOfAttachments<
     return keyedValues
 }
 
-public func CMSetAttachment<Target: CMAttachmentBearerProtocol>(
+public func CMSetAttachment<Target: CMAttachmentStorageBearerProtocol>(
     _ target: borrowing Target,
     key: CMAttachmentKey,
     value: CMAttachmentValue,
@@ -41,7 +41,7 @@ public func CMSetAttachment<Target: CMAttachmentBearerProtocol>(
     )
 }
 
-public func CMSetAttachments<Target: CMAttachmentBearerProtocol>(
+public func CMSetAttachments<Target: CMAttachmentStorageBearerProtocol>(
     _ target: borrowing Target,
     attachments: [CMAttachmentKey: CMAttachmentValue],
     attachmentMode: CMAttachmentMode
@@ -57,22 +57,22 @@ public func CMSetAttachments<Target: CMAttachmentBearerProtocol>(
     )
 }
 
-public func CMRemoveAttachment<Target: CMAttachmentBearerProtocol>(
+public func CMRemoveAttachment<Target: CMAttachmentStorageBearerProtocol>(
     _ target: borrowing Target,
     key: CMAttachmentKey
 ) {
     target.attachments[key] = nil
 }
 
-public func CMRemoveAllAttachments<Target: CMAttachmentBearerProtocol>(
+public func CMRemoveAllAttachments<Target: CMAttachmentStorageBearerProtocol>(
     _ target: borrowing Target
 ) {
     target.attachments.removeAll()
 }
 
 public func CMPropagateAttachments<
-    Source: CMAttachmentBearerProtocol,
-    Destination: CMAttachmentBearerProtocol
+    Source: CMAttachmentStorageBearerProtocol,
+    Destination: CMAttachmentStorageBearerProtocol
 >(
     _ source: borrowing Source,
     destination: borrowing Destination

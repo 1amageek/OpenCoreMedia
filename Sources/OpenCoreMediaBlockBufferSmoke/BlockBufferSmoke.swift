@@ -1,11 +1,58 @@
 import OpenCoreMedia
+import Synchronization
 
 @main
 struct OpenCoreMediaBlockBufferSmoke {
     static func main() throws {
+        try OpenCoreMediaPortableCompletionSmoke.verify()
         try verifySegmentOperations()
+        try verifyDeferredAllocation()
         try verifyAliasingFailure()
         try verifyLeaseRelease()
+    }
+
+    private static func verifyDeferredAllocation() throws {
+        let counter = OpenCoreMediaBlockBufferReleaseCounter()
+        let allocationCount = Mutex(0)
+        var buffer: CMBlockBuffer? = try CMBlockBuffer(
+            blockLength: 16,
+            offsetToData: 4,
+            dataLength: 8,
+            allocator: { length in
+                allocationCount.withLock { $0 += 1 }
+                let pointer = UnsafeMutableRawPointer.allocate(
+                    byteCount: length,
+                    alignment: 8
+                )
+                pointer.initializeMemory(
+                    as: UInt8.self,
+                    repeating: 6,
+                    count: length
+                )
+                return pointer
+            },
+            deallocator: { pointer, _ in
+                counter.record()
+                pointer.deallocate()
+            }
+        )
+        guard allocationCount.withLock({ $0 }) == 0 else {
+            throw OpenCoreMediaBlockBufferSmokeError.contractViolated
+        }
+        try buffer?.assureBlockMemory()
+        try buffer?.assureBlockMemory()
+        guard allocationCount.withLock({ $0 }) == 1 else {
+            throw OpenCoreMediaBlockBufferSmokeError.contractViolated
+        }
+        try buffer?.withContiguousStorage { bytes in
+            guard bytes.count == 8, bytes[0] == 6 else {
+                throw OpenCoreMediaBlockBufferSmokeError.contractViolated
+            }
+        }
+        buffer = nil
+        guard counter.count == 1 else {
+            throw OpenCoreMediaBlockBufferSmokeError.contractViolated
+        }
     }
 
     private static func verifySegmentOperations() throws {

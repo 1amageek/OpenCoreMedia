@@ -1,19 +1,60 @@
-public final class CMBlockBuffer: CMBlockBufferProtocol {
-    // FIXME(INCOMPLETE_IMPLEMENTATION): CMBlockBuffer currently has no
-    // CMAttachmentBearerProtocol conformance, so attachment operations have no
-    // callable path for block buffers and fail at compile time. Block-buffer
-    // attachments must not be reported as supported until storage, propagation,
-    // reference-copy behavior, and Apple differential tests are implemented.
-    public typealias CustomBlockDeallocator = (
+import Synchronization
+
+public final class CMBlockBuffer:
+    CMBlockBufferProtocol,
+    CMAttachmentStorageBearerProtocol
+{
+    private final class Storage: Sendable {
+        struct State: Sendable {
+            var segments: [CMBlockBufferSegment]
+            var length: Int
+            var reservedLength: Int
+        }
+
+        let state: CMStateLock<State>
+        let attachments: CMAttachmentBearerAttachments
+
+        init(
+            segments: [CMBlockBufferSegment],
+            length: Int,
+            attachments: CMAttachmentBearerAttachments =
+                CMAttachmentBearerAttachments()
+        ) {
+            state = CMStateLock(State(
+                segments: segments,
+                length: length,
+                reservedLength: 0
+            ))
+            self.attachments = attachments
+        }
+    }
+
+    /// Releases a previously accepted memory block exactly once.
+    ///
+    /// The pointer and byte count are the allocator result and requested
+    /// extent. The callback runs only after ownership was transferred by a
+    /// successful initializer or append operation.
+    public typealias CustomBlockDeallocator = @Sendable (
         UnsafeMutableRawPointer,
         Int
     ) -> Void
-    public typealias CustomBlockAllocator = (
+
+    /// Allocates at least the requested number of writable bytes.
+    ///
+    /// The returned pointer must remain valid until its paired deallocator is
+    /// called and must have alignment suitable for raw byte access. Returning
+    /// `nil` reports allocation failure without transferring ownership.
+    public typealias CustomBlockAllocator = @Sendable (
         Int
     ) -> UnsafeMutableRawPointer?
 
-    private var segments: [CMBlockBufferSegment]
-    private var storageLength: Int
+    private let storage: Storage
+    private var storageLength: Int {
+        storage.state.withLock { $0.length }
+    }
+    public var attachments: CMAttachmentBearerAttachments {
+        storage.attachments
+    }
     private static let eagerReservationLimit = 4_096
     private static let maximumCapacity =
         Int(exactly: UInt32.max) ?? Int.max
@@ -27,28 +68,53 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         }
         try Self.validate(flags: flags, allowing: [])
 
-        segments = []
-        segments.reserveCapacity(
+        var initialSegments: [CMBlockBufferSegment] = []
+        initialSegments.reserveCapacity(
             min(capacity, Self.eagerReservationLimit)
         )
-        storageLength = 0
+        storage = Storage(segments: initialSegments, length: 0)
     }
 
-    public init(
+    /// Transfers the entire raw buffer to this block buffer on success.
+    ///
+    /// Validation failure leaves ownership with the caller. After success,
+    /// the deallocator receives the original base address and full extent
+    /// exactly once, even when only a subrange is represented.
+    public convenience init(
         buffer: UnsafeMutableRawBufferPointer,
         deallocator: @escaping CustomBlockDeallocator,
         flags: Flags = []
     ) throws(CMBlockBufferError) {
-        // FIXME(INCOMPLETE_IMPLEMENTATION): This constructor requires an
-        // already-allocated memory block. The current call path supports
-        // immediate external leases, segmented append, and explicit contiguous
-        // materialization, but not allocator-backed deferred blocks. Deferred
-        // flags must not report success until allocation and failure behavior
-        // are implemented.
+        try self.init(
+            buffer: buffer,
+            offsetToData: 0,
+            dataLength: buffer.count,
+            deallocator: deallocator,
+            flags: flags
+        )
+    }
+
+    /// Transfers a raw block while representing only the selected range.
+    ///
+    /// Validation failure leaves ownership with the caller. After success,
+    /// the deallocator receives the original base address and full extent
+    /// exactly once.
+    public init(
+        buffer: UnsafeMutableRawBufferPointer,
+        offsetToData: Int,
+        dataLength: Int,
+        deallocator: @escaping CustomBlockDeallocator,
+        flags: Flags = []
+    ) throws(CMBlockBufferError) {
         try Self.validate(flags: flags, allowing: [.assureMemoryNow])
-        guard buffer.count > 0 else {
+        guard buffer.count > 0, dataLength > 0 else {
             throw .emptyBuffer
         }
+        let dataRange = try Self.validatedBlockRange(
+            offsetToData: offsetToData,
+            dataLength: dataLength,
+            blockLength: buffer.count
+        )
         guard let baseAddress = buffer.baseAddress else {
             throw .storageUnavailable
         }
@@ -58,27 +124,65 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
             byteCount: buffer.count,
             deallocator: deallocator
         )
-        segments = [
+        storage = Storage(segments: [
             CMBlockBufferSegment(
                 lease: lease,
-                leaseRange: 0..<buffer.count
+                leaseRange: dataRange
             )
-        ]
-        storageLength = buffer.count
+        ], length: dataLength)
+    }
+
+    /// Creates a block whose allocation can be deferred until first access.
+    ///
+    /// The allocator must return at least `blockLength` writable bytes.
+    /// Ownership transfers only after a non-`nil` allocation result, and the
+    /// paired deallocator then runs exactly once.
+    public init(
+        blockLength: Int,
+        offsetToData: Int = 0,
+        dataLength: Int? = nil,
+        allocator: @escaping CustomBlockAllocator,
+        deallocator: @escaping CustomBlockDeallocator,
+        flags: Flags = []
+    ) throws(CMBlockBufferError) {
+        try Self.validate(flags: flags, allowing: [.assureMemoryNow])
+        let representedLength = dataLength ?? blockLength
+        let dataRange = try Self.validatedBlockRange(
+            offsetToData: offsetToData,
+            dataLength: representedLength,
+            blockLength: blockLength
+        )
+        let lease = CMBlockBufferMemoryLease(
+            deferredByteCount: blockLength,
+            allocator: allocator,
+            deallocator: deallocator
+        )
+        if flags.contains(.assureMemoryNow) {
+            try lease.assureMemory()
+        }
+        storage = Storage(segments: [
+            CMBlockBufferSegment(
+                lease: lease,
+                leaseRange: dataRange
+            )
+        ], length: representedLength)
     }
 
     public init<Reference: CMBlockBufferProtocol>(
         bufferReference: Reference,
         flags: Flags = []
     ) throws(CMBlockBufferError) {
-        segments = []
-        storageLength = 0
+        storage = Storage(segments: [], length: 0)
         try append(bufferReference: bufferReference, flags: flags)
     }
 
+    /// Retains the same mutable block-buffer storage and attachments.
+    ///
+    /// Swift initializers cannot return the identical class object, but both
+    /// wrappers observe later appends and attachment changes through the same
+    /// shared storage, matching the observable Core Media retain contract.
     public init(referencing object: CMBlockBuffer) {
-        segments = object.segments
-        storageLength = object.storageLength
+        storage = object.storage
     }
 
     public var owner: CMBlockBuffer {
@@ -97,32 +201,95 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         dataLength == 0
     }
 
+    /// Appends a caller-owned block, transferring ownership only on success.
     public func append(
         buffer: UnsafeMutableRawBufferPointer,
         deallocator: @escaping CustomBlockDeallocator,
         flags: Flags = []
     ) throws(CMBlockBufferError) {
+        try append(
+            buffer: buffer,
+            offsetToData: 0,
+            dataLength: buffer.count,
+            deallocator: deallocator,
+            flags: flags
+        )
+    }
+
+    /// Appends a represented subrange of a caller-owned memory block.
+    ///
+    /// Validation failure leaves ownership with the caller. On success, the
+    /// full original block is retained and released exactly once.
+    public func append(
+        buffer: UnsafeMutableRawBufferPointer,
+        offsetToData: Int,
+        dataLength: Int,
+        deallocator: @escaping CustomBlockDeallocator,
+        flags: Flags = []
+    ) throws(CMBlockBufferError) {
         try Self.validate(flags: flags, allowing: [.assureMemoryNow])
-        guard buffer.count > 0 else {
+        guard buffer.count > 0, dataLength > 0 else {
             throw .emptyBuffer
         }
+        let dataRange = try Self.validatedBlockRange(
+            offsetToData: offsetToData,
+            dataLength: dataLength,
+            blockLength: buffer.count
+        )
         guard let baseAddress = buffer.baseAddress else {
             throw .storageUnavailable
         }
-        try validateAppendedLength(buffer.count)
-
-        let lease = CMBlockBufferMemoryLease(
-            pointer: baseAddress,
-            byteCount: buffer.count,
-            deallocator: deallocator
-        )
-        appendSegments([
-            CMBlockBufferSegment(
-                lease: lease,
-                leaseRange: 0..<buffer.count
+        try commitAppend(length: dataLength) {
+            let lease = CMBlockBufferMemoryLease(
+                pointer: baseAddress,
+                byteCount: buffer.count,
+                deallocator: deallocator
             )
-        ])
-        storageLength += buffer.count
+            return [
+                CMBlockBufferSegment(
+                    lease: lease,
+                    leaseRange: dataRange
+                )
+            ]
+        }
+    }
+
+    /// Appends a memory block whose allocation can be deferred.
+    ///
+    /// The allocator must return at least `blockLength` writable bytes.
+    /// Failure before allocation leaves no deallocation obligation.
+    public func append(
+        blockLength: Int,
+        offsetToData: Int = 0,
+        dataLength: Int? = nil,
+        allocator: @escaping CustomBlockAllocator,
+        deallocator: @escaping CustomBlockDeallocator,
+        flags: Flags = []
+    ) throws(CMBlockBufferError) {
+        try Self.validate(flags: flags, allowing: [.assureMemoryNow])
+        let representedLength = dataLength ?? blockLength
+        let dataRange = try Self.validatedBlockRange(
+            offsetToData: offsetToData,
+            dataLength: representedLength,
+            blockLength: blockLength
+        )
+        try commitAppend(length: representedLength) {
+            () throws(CMBlockBufferError) -> [CMBlockBufferSegment] in
+            let lease = CMBlockBufferMemoryLease(
+                deferredByteCount: blockLength,
+                allocator: allocator,
+                deallocator: deallocator
+            )
+            if flags.contains(.assureMemoryNow) {
+                try lease.assureMemory()
+            }
+            return [
+                CMBlockBufferSegment(
+                    lease: lease,
+                    leaseRange: dataRange
+                )
+            ]
+        }
     }
 
     public func append<Reference: CMBlockBufferProtocol>(
@@ -149,18 +316,26 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
             }
             return
         }
-        try validateAppendedLength(referencedLength)
-
         let referencedSegments = try bufferReference.owner.segmentViews(
             in: referencedRange
         )
-        appendSegments(referencedSegments)
-        storageLength += referencedLength
+        try commitAppend(length: referencedLength) {
+            () throws(CMBlockBufferError) -> [CMBlockBufferSegment] in
+            if flags.contains(.assureMemoryNow) {
+                for segment in referencedSegments {
+                    try segment.lease.assureMemory()
+                }
+            }
+            return referencedSegments
+        }
     }
 
     public func assureBlockMemory() throws(CMBlockBufferError) {
         guard !isEmpty else {
             throw .emptyBuffer
+        }
+        for segment in storageSnapshot().segments {
+            try segment.lease.assureMemory()
         }
     }
 
@@ -247,16 +422,20 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         startIndex: Int,
         endIndex: Int
     ) -> Bool {
+        let snapshot = storageSnapshot()
         guard startIndex >= 0,
               endIndex >= startIndex,
-              endIndex <= storageLength
+              endIndex <= snapshot.length
         else {
             return false
         }
         let range = startIndex..<endIndex
         if range.isEmpty {
-            return range.lowerBound < storageLength
-                && segmentTail(at: range.lowerBound) != nil
+            return range.lowerBound < snapshot.length
+                && Self.segmentTail(
+                    at: range.lowerBound,
+                    in: snapshot
+                ) != nil
         }
         return contiguousSegmentView(in: range) != nil
     }
@@ -270,8 +449,9 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         )
         let readOnlyDestination = UnsafeRawBufferPointer(writtenDestination)
         var overlapsStorage = false
-        try forEachSegmentView(in: range) { view in
-            if view.lease.overlaps(
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            if try view.lease.overlaps(
                 readOnlyDestination,
                 in: view.leaseRange
             ) {
@@ -283,15 +463,17 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         }
         var destinationOffset = 0
 
-        try forEachSegmentView(in: range) { view in
-            view.lease.withReadBytes(in: view.leaseRange) { source in
-                let target = UnsafeMutableRawBufferPointer(
-                    rebasing: destination[
-                        destinationOffset..<(destinationOffset + source.count)
-                    ]
-                )
-                target.copyMemory(from: source)
-            }
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            let target = UnsafeMutableRawBufferPointer(
+                rebasing: destination[
+                    destinationOffset..<(destinationOffset + view.count)
+                ]
+            )
+            try view.lease.copyBytes(
+                in: view.leaseRange,
+                to: target
+            )
             destinationOffset += view.count
         }
     }
@@ -301,8 +483,9 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         with source: UnsafeRawBufferPointer
     ) throws(CMBlockBufferError) {
         var overlapsStorage = false
-        try forEachSegmentView(in: range) { view in
-            if view.lease.overlaps(source, in: view.leaseRange) {
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            if try view.lease.overlaps(source, in: view.leaseRange) {
                 overlapsStorage = true
             }
         }
@@ -311,15 +494,17 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         }
         var sourceOffset = 0
 
-        try forEachSegmentView(in: range) { view in
-            view.lease.withWriteBytes(in: view.leaseRange) { destination in
-                let sourceView = UnsafeRawBufferPointer(
-                    rebasing: source[
-                        sourceOffset..<(sourceOffset + destination.count)
-                    ]
-                )
-                destination.copyMemory(from: sourceView)
-            }
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            let sourceView = UnsafeRawBufferPointer(
+                rebasing: source[
+                    sourceOffset..<(sourceOffset + view.count)
+                ]
+            )
+            try view.lease.replaceBytes(
+                in: view.leaseRange,
+                with: sourceView
+            )
             sourceOffset += view.count
         }
     }
@@ -328,13 +513,16 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         in range: Range<Int>,
         with fillByte: UInt8
     ) throws(CMBlockBufferError) {
-        try forEachSegmentView(in: range) { view in
-            view.lease.withWriteBytes(in: view.leaseRange) { destination in
-                _ = destination.initializeMemory(
-                    as: UInt8.self,
-                    repeating: fillByte
-                )
-            }
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            try view.lease.assureMemory()
+        }
+        try forEachSegmentView(in: range) {
+            view throws(CMBlockBufferError) in
+            try view.lease.fillBytes(
+                in: view.leaseRange,
+                with: fillByte
+            )
         }
     }
 
@@ -358,6 +546,9 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         if !flags.contains(.alwaysCopyData),
            let segment = contiguousSegmentView(in: range)
         {
+            if flags.contains(.assureMemoryNow) {
+                try segment.lease.assureMemory()
+            }
             return CMBlockBuffer(segments: [segment])
         }
 
@@ -390,17 +581,46 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
     }
 
     private init(segments: [CMBlockBufferSegment]) {
-        self.segments = segments
-        storageLength = segments.reduce(into: 0) { length, segment in
+        let length = segments.reduce(into: 0) { length, segment in
             length += segment.count
         }
+        storage = Storage(segments: segments, length: length)
     }
 
-    private func validateAppendedLength(
-        _ appendedLength: Int
+    private func storageSnapshot() -> Storage.State {
+        storage.state.withLock { $0 }
+    }
+
+    private func commitAppend(
+        length: Int,
+        segments makeSegments: () throws(CMBlockBufferError)
+            -> [CMBlockBufferSegment]
     ) throws(CMBlockBufferError) {
-        guard appendedLength <= Int.max - storageLength else {
-            throw .lengthOverflow
+        try storage.state.withLock {
+            state throws(CMBlockBufferError) in
+            guard length <= Int.max - state.length,
+                  state.reservedLength
+                    <= Int.max - state.length - length
+            else {
+                throw .lengthOverflow
+            }
+            state.reservedLength += length
+        }
+        let appendedSegments: [CMBlockBufferSegment]
+        do {
+            appendedSegments = try makeSegments()
+        } catch {
+            storage.state.withLock { $0.reservedLength -= length }
+            throw error
+        }
+        storage.state.withLock {
+            state in
+            state.reservedLength -= length
+            Self.appendSegments(
+                appendedSegments,
+                to: &state.segments
+            )
+            state.length += length
         }
     }
 
@@ -417,8 +637,12 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
     private func contiguousSegmentView(
         in range: Range<Int>
     ) -> CMBlockBufferSegment? {
+        let snapshot = storageSnapshot()
         if range.isEmpty {
-            return segmentTail(at: range.lowerBound).map { segment in
+            return Self.segmentTail(
+                at: range.lowerBound,
+                in: snapshot
+            ).map { segment in
                 CMBlockBufferSegment(
                     lease: segment.lease,
                     leaseRange:
@@ -429,7 +653,7 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         }
 
         var logicalOffset = 0
-        for segment in segments {
+        for segment in snapshot.segments {
             let logicalUpperBound = logicalOffset + segment.count
             if range.lowerBound >= logicalOffset,
                range.upperBound <= logicalUpperBound
@@ -452,12 +676,19 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
     private func segmentTail(
         at offset: Int
     ) -> CMBlockBufferSegment? {
-        guard offset >= 0, offset < storageLength else {
+        Self.segmentTail(at: offset, in: storageSnapshot())
+    }
+
+    private static func segmentTail(
+        at offset: Int,
+        in snapshot: Storage.State
+    ) -> CMBlockBufferSegment? {
+        guard offset >= 0, offset < snapshot.length else {
             return nil
         }
 
         var logicalOffset = 0
-        for segment in segments {
+        for segment in snapshot.segments {
             let logicalUpperBound = logicalOffset + segment.count
             if offset < logicalUpperBound {
                 let leaseLowerBound =
@@ -486,15 +717,16 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
 
     private func forEachSegmentView(
         in range: Range<Int>,
-        _ body: (CMBlockBufferSegment) -> Void
+        _ body: (CMBlockBufferSegment) throws(CMBlockBufferError) -> Void
     ) throws(CMBlockBufferError) {
-        _ = try validatedStorageRange(range)
+        let snapshot = storageSnapshot()
+        _ = try validatedStorageRange(range, in: snapshot)
         guard !range.isEmpty else {
             return
         }
 
         var logicalOffset = 0
-        for segment in segments {
+        for segment in snapshot.segments {
             let logicalUpperBound = logicalOffset + segment.count
             let overlapLowerBound = max(range.lowerBound, logicalOffset)
             let overlapUpperBound = min(range.upperBound, logicalUpperBound)
@@ -503,7 +735,7 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
                 let leaseLowerBound =
                     segment.leaseRange.lowerBound
                     + (overlapLowerBound - logicalOffset)
-                body(CMBlockBufferSegment(
+                try body(CMBlockBufferSegment(
                     lease: segment.lease,
                     leaseRange:
                         leaseLowerBound
@@ -524,15 +756,22 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
     private func validatedStorageRange(
         _ range: Range<Int>
     ) throws(CMBlockBufferError) -> Range<Int> {
+        try validatedStorageRange(range, in: storageSnapshot())
+    }
+
+    private func validatedStorageRange(
+        _ range: Range<Int>,
+        in snapshot: Storage.State
+    ) throws(CMBlockBufferError) -> Range<Int> {
         guard range.lowerBound >= 0,
-              range.upperBound <= storageLength,
+              range.upperBound <= snapshot.length,
               range.lowerBound <= range.upperBound
         else {
             throw .invalidRange(
                 lowerBound: range.lowerBound,
                 upperBound: range.upperBound,
                 validLowerBound: 0,
-                validUpperBound: storageLength
+                validUpperBound: snapshot.length
             )
         }
         return range
@@ -542,22 +781,24 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         startIndex: Int,
         endIndex: Int
     ) throws(CMBlockBufferError) -> Range<Int> {
+        let snapshot = storageSnapshot()
         guard startIndex >= 0,
               endIndex >= startIndex,
-              endIndex <= storageLength
+              endIndex <= snapshot.length
         else {
             throw .invalidRange(
                 lowerBound: startIndex,
                 upperBound: endIndex,
                 validLowerBound: 0,
-                validUpperBound: storageLength
+                validUpperBound: snapshot.length
             )
         }
         return startIndex..<endIndex
     }
 
-    private func appendSegments(
-        _ appendedSegments: [CMBlockBufferSegment]
+    private static func appendSegments(
+        _ appendedSegments: [CMBlockBufferSegment],
+        to segments: inout [CMBlockBufferSegment]
     ) {
         for segment in appendedSegments {
             if let last = segments.last,
@@ -578,5 +819,25 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         guard unsupportedFlags.isEmpty else {
             throw .unsupportedFlags(rawValue: unsupportedFlags.rawValue)
         }
+    }
+
+    private static func validatedBlockRange(
+        offsetToData: Int,
+        dataLength: Int,
+        blockLength: Int
+    ) throws(CMBlockBufferError) -> Range<Int> {
+        guard blockLength > 0,
+              offsetToData >= 0,
+              dataLength > 0,
+              offsetToData <= blockLength,
+              dataLength <= blockLength - offsetToData
+        else {
+            throw .invalidBlockRange(
+                offsetToData: offsetToData,
+                dataLength: dataLength,
+                blockLength: blockLength
+            )
+        }
+        return offsetToData..<(offsetToData + dataLength)
     }
 }

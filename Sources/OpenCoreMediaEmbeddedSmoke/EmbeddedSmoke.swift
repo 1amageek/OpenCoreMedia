@@ -1,14 +1,12 @@
 import OpenCoreMedia
+import Synchronization
 
 @main
 struct OpenCoreMediaEmbeddedSmoke {
     static func main() throws {
         let dimensions = try CVPixelDimensions(width: 2, height: 1)
-        let image = try CVPackedPixelBuffer(
-            dimensions: dimensions,
-            pixelFormat: .bgra32,
-            bytesPerPixel: 4,
-            bytesPerRow: 8
+        let image = OpenCoreMediaEmbeddedPixelBuffer(
+            dimensions: dimensions
         )
         let format = CMImmutableVideoFormatDescription(
             dimensions: dimensions,
@@ -25,8 +23,15 @@ struct OpenCoreMediaEmbeddedSmoke {
         let sample = try CMImageSampleBuffer(
             imageBuffer: image,
             formatDescription: format,
-            timing: [timing]
+            timing: [timing],
+            dataReadiness: .notReady
         )
+        requireSendable(sample)
+        let erasedSample: any CMSampleBuffer = sample
+
+        guard try erasedSample.sampleCount() == 1 else {
+            throw OpenCoreMediaEmbeddedSmokeError.existentialContractViolated
+        }
 
         guard sample.sampleAttachments(
             createIfNecessary: false
@@ -47,19 +52,33 @@ struct OpenCoreMediaEmbeddedSmoke {
             .integer(7)
         )
 
-        try sample.setDataReadiness(.notReady)
         do {
             _ = try sample.imageBuffer()
             throw OpenCoreMediaEmbeddedSmokeError.readinessIgnored
         } catch CMSampleBufferError.dataNotReady {
         }
-        try sample.setDataReadiness(.failed(code: 17))
+        try sample.setDataReadiness(.ready)
+        guard try erasedSample.imageBuffer() === image else {
+            throw OpenCoreMediaEmbeddedSmokeError.existentialContractViolated
+        }
+
+        let failedSample = try CMImageSampleBuffer(
+            imageBuffer: image,
+            formatDescription: format,
+            timing: [timing],
+            dataReadiness: .notReady
+        )
+        try failedSample.setDataReadiness(.failed(code: 17))
         do {
-            _ = try sample.imageBuffer()
+            _ = try failedSample.imageBuffer()
             throw OpenCoreMediaEmbeddedSmokeError.readinessFailureIgnored
         } catch CMSampleBufferError.dataFailed(code: 17) {
         }
-        try sample.setDataReadiness(.ready)
+        do {
+            try failedSample.setDataReadiness(.ready)
+            throw OpenCoreMediaEmbeddedSmokeError.readinessFailureIgnored
+        } catch CMSampleBufferError.invalidReadinessTransition {
+        }
 
         let pointer = UnsafeMutableRawPointer.allocate(
             byteCount: 8,
@@ -256,7 +275,12 @@ struct OpenCoreMediaEmbeddedSmoke {
 
         try verifyBlockAliasingFailure()
         try verifyBlockLeaseRelease()
+        try OpenCoreMediaPortableCompletionSmoke.verify()
     }
+
+    private static func requireSendable<Value: Sendable>(
+        _ value: borrowing Value
+    ) {}
 
     private static func verifyBlockAliasingFailure() throws {
         let pointer = UnsafeMutableRawPointer.allocate(
@@ -368,16 +392,79 @@ enum OpenCoreMediaEmbeddedSmokeError: Error {
     case aliasAccepted
     case copyContractViolated
     case metadataAliased
+    case existentialContractViolated
 }
 
 enum OpenCoreMediaEmbeddedBorrowError: Error {
     case expected
 }
 
-final class OpenCoreMediaEmbeddedReleaseCounter {
-    private(set) var count = 0
+final class OpenCoreMediaEmbeddedReleaseCounter: Sendable {
+    private let storedCount = Mutex(0)
+
+    var count: Int {
+        storedCount.withLock { $0 }
+    }
 
     func record() {
-        count += 1
+        storedCount.withLock { $0 += 1 }
     }
+}
+
+private final class OpenCoreMediaEmbeddedPixelBuffer:
+    CVPixelBuffer,
+    Sendable
+{
+    let dimensions: CVPixelDimensions
+    let pixelFormat: CVPixelFormatType = .bgra32
+    let bytesPerRow = 8
+    let byteCount = 8
+    let accessCapabilities: CVPixelBufferAccessCapabilities = []
+    let attachments = OpenCoreMediaEmbeddedPixelAttachments()
+
+    init(dimensions: CVPixelDimensions) {
+        self.dimensions = dimensions
+    }
+
+    func withReadBytes(
+        _ body: (borrowing Span<UInt8>) -> Void
+    ) throws(CVPixelBufferError) {
+        throw .unsupportedAccess(.read)
+    }
+
+    func withWriteBytes(
+        _ body: (inout MutableSpan<UInt8>) -> Void
+    ) throws(CVPixelBufferError) {
+        throw .unsupportedAccess(.write)
+    }
+}
+
+private struct OpenCoreMediaEmbeddedPixelAttachments:
+    CVBufferAttachmentStorage
+{
+    func attachment(
+        for key: CVAttachmentKey
+    ) -> CVBufferAttachment? {
+        nil
+    }
+
+    func attachments(
+        for mode: CVAttachmentMode
+    ) -> [CVAttachmentKey: CVAttachmentValue] {
+        [:]
+    }
+
+    func setAttachment(
+        _ attachment: CVBufferAttachment,
+        for key: CVAttachmentKey
+    ) {}
+
+    func setAttachments(
+        _ attachments: [CVAttachmentKey: CVAttachmentValue],
+        mode: CVAttachmentMode
+    ) {}
+
+    func removeAttachment(for key: CVAttachmentKey) {}
+
+    func removeAllAttachments() {}
 }

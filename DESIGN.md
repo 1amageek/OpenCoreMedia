@@ -7,11 +7,13 @@ behavior Smokes for rational time, basic time ranges, immutable video
 descriptions, ready image sample buffers, and a contiguous zero-copy block
 buffer owner/view path. Segmented block assembly, zero-copy buffer references,
 cross-segment copy/fill/replace operations, and explicit contiguous
-materialization are also implemented. Buffer-level attachment operations and
-timing-copy propagation are implemented. The current image-sample path
+materialization are also implemented. Deferred and allocator-backed blocks,
+raw-memory data ranges, buffer-level attachment operations, owned byte
+attachments, multi-sample block payloads, asynchronous readiness, injected
+clocks, timebases, and bounded queues are implemented. The image-sample path
 additionally provides lazy per-sample attachment dictionaries and their
-timing-copy behavior. These milestones are intentionally narrower than Core
-Media API compatibility; the remaining sequence below is still required.
+timing-copy behavior. These milestones remain narrower than complete Core Media
+API compatibility.
 
 ## Apple API review
 
@@ -51,6 +53,13 @@ read the installed `CMBlockBuffer.h`, and reviewed `init(capacity:flags:)`,
 `init(bufferReference:flags:)`, `append(buffer:deallocator:flags:)`,
 `append(bufferReference:flags:)`, `assureBlockMemory()`, `isContiguous`,
 `withContiguousStorage`, and `makeContiguous` with `remark`.
+
+The completion slice read `CMBlockBufferCreateWithMemoryBlock`,
+`CMBlockBufferAppendMemoryBlock`, `CMSampleBufferCreate`,
+`CMSampleBufferCreateWithMakeDataReadyHandler`, `CMSampleBufferMakeDataReady`,
+`CMSync.h`, `CMBufferQueue.h`, and `CMSimpleQueue.h` from the local macOS 27
+SDK on 2026-07-25. Apple documentation for `dataBytes()`, clocks, timebases,
+timed queues, and simple queues was read with `remark`.
 
 The local Swift overlay exposes `CMBlockBufferProtocol`, `CMBlockBuffer.Slice`,
 range subscripts, `withContiguousStorage`, `withUnsafeMutableBytes`,
@@ -151,9 +160,10 @@ segment views from another buffer or slice and retain the same leases. Reference
 operations accept `.assureMemoryNow`, `.dontOptimizeDepth`, and
 `.permitEmptyReference`. The segment table is always flat, so depth suppression
 does not require a second representation.
-`init(referencing:)` snapshots the current segment table. Later segment appends
-to the source therefore do not change an existing reference, while byte
-mutations remain visible through every lease-sharing reference.
+`init(referencing:)` retains the same synchronized storage object. Later segment
+appends and attachment changes are therefore visible through both wrappers,
+matching the observable retain-style contract even though a Swift initializer
+cannot return the identical class object.
 
 `CMBlockBuffer.Slice` retains its `owner` plus an absolute logical byte range.
 Cross-segment copy, replace, and fill operations iterate the overlapping
@@ -192,9 +202,24 @@ segment writes from corrupting bytes that a later segment has not yet read.
 The caller must use disjoint storage or explicitly materialize a separate
 buffer.
 
-Append operations remain owner-isolated and non-Sendable, matching Apple's
-explicit statement that append is not thread-safe. Deferred allocation and the
-allocator-backed append/initializer overloads remain unimplemented.
+Allocator-backed construction and append create one lease for the complete
+memory block and expose only the validated data range. Without
+`.assureMemoryNow`, the allocator is invoked only by the first byte access or
+`assureBlockMemory()`. Failed allocation is typed and never installs a
+placeholder pointer. Allocation is reserved under the lease mutex, but the
+caller-supplied allocator executes after that mutex is released. Reentrant or
+concurrent access during allocation reports `allocationInProgress` instead of
+deadlocking or starting a second allocation. The deallocator runs exactly once
+only after successful allocation.
+
+`CMBlockBuffer`, its slices, and sample carriers are `Sendable` on Native, WASM,
+and Embedded. Segment-table mutations are serialized, lease pointer state is
+serialized, and raw borrows reserve reader or writer access under the lease
+mutex. The caller's byte closure executes after the mutex is released; an
+incompatible overlapping borrow reports `concurrentAccessConflict`. An append
+validates length and commits its new leases atomically; failed concurrent commits
+do not transfer caller ownership. Unsafe pointers never cross the scoped borrow
+boundary.
 
 ### Sample buffer
 
@@ -215,7 +240,7 @@ A sample buffer may contain zero or more samples of one uniform media type. It
 retains its payload lease. Timing, sizes, and format must agree with the declared
 sample count.
 
-The current image-buffer implementation accepts exactly one sample. Its public
+The image-buffer implementation accepts exactly one sample. Its public
 timing input remains an array for API compatibility, but validation collapses
 that input to one stored `CMSampleTimingInfo` value. This avoids persistent
 per-frame timing-array storage without claiming that boundary-array creation is
@@ -233,15 +258,38 @@ any valid state ──invalidate──► invalid
 
 Failed or invalid data is never exposed as an empty successful sample.
 
+The non-generic `CMBlockSampleBuffer` retains one `CMBlockBuffer` plus an
+`any CMFormatDescription` and supports one or many
+sample timing and size entries. A single entry is expanded according to Apple's
+shared-entry contract. Known sample sizes must exactly cover the represented
+block range; absent sizes remain explicitly unavailable. Per-sample payload
+access returns a zero-copy `CMBlockBuffer.Slice`.
+
+The image and block carriers are non-generic, matching Core Media's
+heterogeneous runtime samples. The block carrier uses the sibling
+`CMBlockSampleBufferProtocol` instead of fabricating a pixel buffer. Both
+carriers expose the same readiness, timing, attachment, and invalidation
+workflow.
+
+Readiness metadata is held by a shared revisioned tracker. Timing-only copies
+share that tracker, so all views observe one terminal result. A handler-backed
+tracker uses one actor to serialize asynchronous materialization; the result is
+committed only if the observed revision is still current. A concurrent explicit
+transition therefore wins without being overwritten. No lock is held across
+`await`, and `.ready` or `.failed` cannot silently transition to another
+terminal state.
+
 ### Attachments
 
 `CMSampleBuffer` is a `CMAttachmentBearerProtocol`. Its
 `CMAttachmentBearerAttachments` storage is metadata owned by the sample buffer
 and is separate from attachments on the retained Core Video image buffer. The
 current portable value contract supports Boolean, signed and unsigned integer,
-floating-point, string, array, and string-keyed dictionary values. Collections
-are recursively typed and use Swift copy-on-write storage. It does not pretend
-to accept Apple's complete `CFType` value space.
+floating-point, string, owned bytes, array, and string-keyed dictionary values.
+Collections are recursively typed and use Swift copy-on-write storage.
+`CMAttachmentBytes(copying:)` is an explicit metadata-copy boundary.
+`CMAttachmentPlatformAdapter` converts platform values without retaining an
+arbitrary platform object in the shared module.
 
 The Swift overlay supports `attachments[key]`, `propagated`,
 `nonPropagated`, `merge(_:mode:)`, `removeAll()`, and
@@ -258,6 +306,13 @@ Apple's basic call shapes:
 
 Propagation first snapshots all `.shouldPropagate` entries from the source,
 then updates the destination. Source and destination locks are never nested.
+A generic `propagateAttachments(to:)` helper remains available in a protocol
+extension, but it is not an existential witness requirement. Apple's protocol
+requires that generic method; the fixed Swift 6.4 Embedded compiler cannot form
+an `any CMSampleBuffer` existential when an inherited protocol witness table
+contains a generic requirement. The portable conformance therefore requires
+only attachment storage, while the same propagation operation remains callable
+on concrete conformers and through `CMPropagateAttachments`.
 A timing-only sample-buffer copy retains the same image-buffer owner, creates
 independent attachment storage, and copies only propagatable entries. Later
 mutation of either attachment storage cannot change the other.
@@ -317,21 +372,17 @@ materialization.
    routing path.
 9. A required contiguous copy is visible in the operation and documented.
 
-Short in-memory state is protected with `Mutex`. Ordered readiness operations that
-can suspend use an actor. `await` never occurs inside `withLock`.
-
-The fixed Swift 6.4 Embedded WASM baseline uses the same
-`Synchronization.Mutex` API and internal exclusion semantics for sample
-readiness, buffer-level attachments, and per-sample dictionaries as Native and
-WASM; the target supplies the backend. `hasFeature(Embedded)` does not select
-weaker internal exclusion for these mutable metadata paths. Public payload
-`Sendable` requirements remain a separate platform contract.
+Short in-memory state is protected by `CMStateLock`, which stores the same
+`Synchronization.Mutex<State>` on Native, WASM, and Embedded. Ordered readiness
+work that can suspend uses an actor. `await` never occurs inside `withLock`.
+Public payload and sample-buffer `Sendable` requirements are identical on every
+target.
 ISR and DMA callback transfer remain outside these metadata objects and require
 their platform-specific atomic or bounded-queue boundary.
 
-`CMBlockBuffer` follows Apple's non-Sendable reference semantics. Its mutable
-external storage is owner-isolated and is not protected by a lock; callers must
-not move a buffer or borrowed pointer across concurrency boundaries.
+Borrowed raw pointers remain non-Sendable even though their owners are
+Sendable. Callers may transfer the owner or a logical slice, but never a pointer
+or buffer view obtained inside a scoped borrow.
 
 ## Platform model
 
@@ -348,13 +399,30 @@ The shared target depends only on the Swift standard library and OpenCoreVideo.
 Clock sources are injected behind a clock contract. Platform clock APIs do not
 appear in the Apple-compatible data types.
 
+`CMClock` validates an injected `CMClockSource` and makes invalidation a typed
+failure. A clock source supplies its media/reference anchor as one correlated
+pair. `CMTimebase` retains a source clock or source timebase and protects its
+rate and paired media/source anchors with `CMStateLock`. A time read samples
+the source outside the lock, then applies the anchor snapshot. A rate change
+preserves the current media time, and explicit rate/anchor updates commit as
+one state transition.
+
+`CMBufferQueue<Element>` is a bounded, synchronized producer/consumer queue.
+It retains elements, maintains checked aggregate duration and size, supports
+FIFO or ordered insertion, readiness-aware dequeue, and explicit
+end-of-data/reset state. User callbacks execute outside the state lock and a
+revision check retries if callback observations became stale. Dequeue advances
+an index in O(1), and reset releases retained elements after unlocking.
+`CMSimpleQueue<Element>` is a bounded two-stack FIFO with lazy storage.
+
 ### Portable API differences
 
 Apple's block-buffer overlay depends on `CFAllocator` and offers `Data`
 materialization. The shared OpenCoreMedia target intentionally has neither
-CoreFoundation nor Foundation, so allocator-taking initializers and
-`dataBytes()` are absent. Platform adapters may bridge their allocator into an
-external mutable buffer and deallocator closure.
+CoreFoundation nor Foundation. Its allocator boundary uses explicit allocation
+and exactly-once deallocation closures. The separate
+`OpenCoreMediaFoundation` product adds `dataBytes()` as a documented
+full-payload copy boundary; WASM and Embedded targets do not depend on it.
 
 Scoped borrow callbacks may throw on Native, WASM, and the fixed Swift 6.4
 Embedded WASM baseline, matching Apple's Swift overlay. The borrow remains
@@ -389,10 +457,15 @@ failure instead of a precondition.
 
 Apple attachment values may be any Core Foundation object. OpenCoreMedia has no
 CoreFoundation dependency on shared targets, so `CMAttachmentValue` is a typed,
-portable value set. Recursive arrays and string-keyed dictionaries are
-supported. Byte payloads and platform-object boxes must gain explicit ownership
-and Sendable contracts before being added; callers must not encode unsupported
-values into lossy strings or ad hoc byte arrays.
+portable value set. Recursive arrays, string-keyed dictionaries, and explicitly
+owned bytes are supported. Arbitrary platform objects cross only through a
+caller-supplied adapter and are not retained by OpenCoreMedia.
+
+Apple's `CMSimpleQueue` is a pointer-only lockless SPSC queue suitable for
+real-time callbacks. The portable generic `CMSimpleQueue<Element>` uses
+`Mutex`, is safe for ordinary concurrent use, and is explicitly not an
+audio-ISR primitive. A platform real-time adapter must provide an atomic ring
+buffer.
 
 ## Error contract
 
@@ -421,16 +494,18 @@ empty sample unless Apple documents that exact result.
 4. Implement media identifiers and immutable format descriptions.
    **Video Smoke complete.**
 5. Implement segmented `CMBlockBuffer`.
-   **Segment assembly, zero-copy references, range-aware contiguity, explicit
-   materialization, and cross-segment byte operations complete. Deferred
-   allocation remains pending.**
+   **Complete for segment assembly, deferred and immediate allocation,
+   raw-memory ranges, zero-copy references, range-aware contiguity, explicit
+   materialization, and cross-segment byte operations.**
 6. Implement `CMSampleTimingInfo` and ready sample buffers.
    **Image-buffer Smoke complete.**
 7. Implement readiness, failure, invalidation, and attachments.
-   **State, buffer-level attachments, per-sample dictionaries, and recursive
-   attachment collection Smokes complete for the image-sample path. Byte values,
-   platform objects, and multi-sample payload carriers remain pending.**
+   **State, asynchronous readiness, block/image buffer-level attachments,
+   per-sample dictionaries, owned bytes, platform adapters, recursive values,
+   and multi-sample block payload Smokes complete.**
 8. Implement clocks, timebases, and queues.
+   **Injected clocks, anchored/rated timebases, bounded timed queues, and a
+   portable bounded simple queue have behavior Smokes.**
 9. Add cross-platform conformance fixtures using OpenCoreVideo buffers.
 
 Each stage requires behavior tests, native Apple comparison where available, and

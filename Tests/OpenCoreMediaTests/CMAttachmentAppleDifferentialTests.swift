@@ -290,15 +290,7 @@ struct CMAttachmentAppleDifferentialTests {
         return try #require(sampleBuffer)
     }
 
-    private func makePortableSample() throws -> CMImageSampleBuffer<
-        CVPackedPixelBuffer<
-            CVOwnedPixelBufferStorage<
-                CVNoOpPixelBufferAccessCoordinator
-            >,
-            CVBufferAttachments
-        >,
-        CMImmutableVideoFormatDescription
-    > {
+    private func makePortableSample() throws -> CMImageSampleBuffer {
         let dimensions = try CVPixelDimensions(width: 2, height: 1)
         let image = try CVPackedPixelBuffer(
             dimensions: dimensions,

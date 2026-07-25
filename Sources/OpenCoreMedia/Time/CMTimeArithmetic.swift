@@ -1,5 +1,6 @@
 enum CMTimeArithmetic {
   static let numericRank: UInt8 = 1
+  private static let maximumArithmeticTimescale: CMTimeScale = 1_000_000_000
 
   enum Operation {
     case add
@@ -259,8 +260,8 @@ enum CMTimeArithmetic {
 
     let divisor = greatestCommonDivisor(UInt64(lhs), UInt64(rhs))
     let product = (Int64(lhs) / Int64(divisor)) * Int64(rhs)
-    if product > Int64(kCMTimeMaxTimescale) {
-      return (kCMTimeMaxTimescale, true)
+    if product > Int64(maximumArithmeticTimescale) {
+      return (maximumArithmeticTimescale, true)
     }
     return (Int32(product), false)
   }
@@ -541,9 +542,7 @@ enum CMTimeArithmetic {
     case .subtract:
       positive = lhs.value >= 0 && rhs.value < 0
     }
-    var result = positive ? CMTime.positiveInfinity : CMTime.negativeInfinity
-    result.flags.insert(.hasBeenRounded)
-    return result
+    return positive ? CMTime.positiveInfinity : CMTime.negativeInfinity
   }
 
   private static func signedInfinity(

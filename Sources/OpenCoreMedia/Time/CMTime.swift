@@ -132,9 +132,9 @@ public struct CMTime: Sendable {
                 epoch: epoch
             )
         case .positiveOverflow:
-            return .positiveInfinity.withRoundedFlag(inheriting: flags)
+            return .positiveInfinity
         case .negativeOverflow:
-            return .negativeInfinity.withRoundedFlag(inheriting: flags)
+            return .negativeInfinity
         }
     }
 
@@ -146,14 +146,6 @@ public struct CMTime: Sendable {
         CMTimeArithmetic.combine(minuend, subtrahend, operation: .subtract)
     }
 
-    private func withRoundedFlag(inheriting sourceFlags: CMTimeFlags) -> CMTime {
-        var result = self
-        if sourceFlags.contains(.hasBeenRounded) {
-            result.flags.insert(.hasBeenRounded)
-        }
-        result.flags.insert(.hasBeenRounded)
-        return result
-    }
 }
 
 extension CMTime: Comparable {

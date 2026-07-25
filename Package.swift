@@ -11,6 +11,10 @@ let package = Package(
         .library(
             name: "OpenCoreMedia",
             targets: ["OpenCoreMedia"]
+        ),
+        .library(
+            name: "OpenCoreMediaFoundation",
+            targets: ["OpenCoreMediaFoundation"]
         )
     ],
     dependencies: [
@@ -23,6 +27,10 @@ let package = Package(
         .target(
             name: "OpenCoreMedia",
             dependencies: ["OpenCoreVideo"]
+        ),
+        .target(
+            name: "OpenCoreMediaFoundation",
+            dependencies: ["OpenCoreMedia"]
         ),
         .executableTarget(
             name: "OpenCoreMediaEmbeddedSmoke",
@@ -40,7 +48,10 @@ let package = Package(
         ),
         .testTarget(
             name: "OpenCoreMediaTests",
-            dependencies: ["OpenCoreMedia"]
+            dependencies: [
+                "OpenCoreMedia",
+                "OpenCoreMediaFoundation"
+            ]
         )
     ],
     swiftLanguageModes: [.v6]

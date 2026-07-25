@@ -5,7 +5,7 @@ set -eu
 OPEN_CORE_MEDIA_ROOT=$(
     CDPATH= cd -- "$(dirname -- "$0")/.." && pwd
 )
-OPEN_CORE_MEDIA_SWIFT="${HOME}/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift"
+OPEN_CORE_MEDIA_SWIFT="${HOME}/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift"
 OPEN_CORE_MEDIA_SDKS="${HOME}/Library/org.swift.swiftpm/swift-sdks"
 OPEN_CORE_MEDIA_SDK="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded"
 OPEN_CORE_MEDIA_TARGET_TRIPLE="wasm32-unknown-wasip1"

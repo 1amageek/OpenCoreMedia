@@ -89,7 +89,7 @@ The per-sample attachment slice additionally requires:
 - [x] Range clamping
 - [x] Exact positive and negative range folding
 - [x] Apple differential mapping and folding fixtures
-- [ ] Apple differential fixtures for broader overflow and epoch combinations
+- [x] Apple differential fixtures for broader overflow and epoch combinations
 
 ### Timing and formats
 
@@ -117,12 +117,15 @@ The per-sample attachment slice additionally requires:
 - [x] Mutable, iterable per-sample dictionary views and all standard keys
 - [x] Typed Boolean access and incompatible-value failure
 - [x] Timing-copy preservation and independent per-sample metadata
-- [ ] Attachment byte values and platform-object adapters
-- [ ] Multi-sample payload carrier
+- [x] Owned attachment byte values and explicit platform-value adapters
+- [x] Multi-sample block payload carrier and zero-copy sample slices
+- [x] Revision-safe asynchronous data readiness handlers shared by timing copies
+- [x] Sendable sample, block-buffer, and zero-copy slice contracts on every target
 
 ### Block buffers
 
 - [x] `CMBlockBufferProtocol` owner and index contract
+- [x] Synchronized `Sendable` owner and zero-copy slice views
 - [x] External contiguous buffer construction
 - [x] Zero-copy `init(referencing:)`
 - [x] `CMBlockBuffer.Slice` retaining owner plus range
@@ -137,15 +140,29 @@ The per-sample attachment slice additionally requires:
 - [x] Range-specific contiguity
 - [x] Cross-segment copy, replace, and fill
 - [x] Explicit contiguous materialization
-- [ ] Deferred allocation
-- [ ] Allocator-backed append and construction overloads
+- [x] Deferred allocation
+- [x] Allocator-backed append and construction overloads
+- [x] Raw-memory offset and data-length construction/append
+- [x] Foundation `dataBytes()` in a separate explicit-copy product
+
+### Clocks and queues
+
+- [x] Injected `CMClockSource` and typed clock invalidation
+- [x] Clock- and timebase-sourced `CMTimebase`
+- [x] Anchored time, rate changes, and effective-rate traversal
+- [x] Bounded timed queue with FIFO/ordered insertion
+- [x] Readiness-aware dequeue and end-of-data/reset
+- [x] Checked aggregate duration and size
+- [x] Callbacks outside locks with revision-safe retry
+- [x] O(1) dequeue metadata and post-unlock release
+- [x] Bounded lazy two-stack portable simple queue
 
 ## Copy boundary
 
-`CMImageSampleBuffer` retains the supplied generic `CVPixelBuffer` reference.
+`CMImageSampleBuffer` retains the supplied Sendable `CVPixelBuffer` reference.
 It does not read, copy, convert, or materialize payload bytes. A timing-only
-copy retains that same image-buffer reference and allocates only timing metadata,
-its own small readiness state, and independent attachment storage. Only
+copy retains that same image-buffer reference and allocates only timing metadata
+and independent attachment storage while sharing the readiness tracker. Only
 `.shouldPropagate` metadata is inserted into the copy. The native Smoke verifies
 object identity and shared mutation through borrowed pixel-buffer byte access:
 writes through the source, original sample, and timing-only copy are observed
@@ -167,20 +184,24 @@ every sample object. This removes persistent array storage from the high-rate
 sample path, but does not claim that construction is allocation-free because
 the caller still creates the boundary array.
 
-The concrete sample buffer is generic over its pixel buffer and video format.
-This avoids existential dispatch on Embedded Swift while preserving protocol
-abstraction. Native, WASM, and the fixed Swift 6.4 Embedded WASM baseline use
-the same Mutex API and exclusion semantics. Lock ownership is separated:
-`CMImageSampleBuffer.State` protects validity, readiness, and the optional
-per-sample storage array; `CMAttachmentStorageReference` protects buffer-level
-attachments; each `CMSampleAttachmentDictionaryStorage` protects one
-per-sample dictionary. The target runtime supplies the Mutex implementation;
-no locks are nested, and no `await` or media-byte work occurs while a lock is
+The image sample buffer is non-generic and stores Sendable pixel-buffer and
+video-format existentials. The block sample buffer is also non-generic and
+stores an `any CMFormatDescription`, matching Core Media's heterogeneous sample
+carrier.
+Native, regular WASI, and Embedded use the same `Synchronization.Mutex`-backed
+`CMStateLock`. Lock ownership is separated: sample state protects validity and
+the optional per-sample storage array; the shared readiness tracker protects
+terminal state and revision; `CMAttachmentStorageReference` protects
+buffer-level attachments; and each `CMSampleAttachmentDictionaryStorage`
+protects one per-sample dictionary. No locks are nested, and no `await`,
+allocator callback, borrow callback, or media-byte work occurs while a lock is
 held.
 
 `CMBlockBuffer` stores segment metadata over external-memory leases rather than
-payload bytes. References snapshot segment views and slices retain an owner plus
-range. Borrow closures receive an original lease pointer adjusted only by their
+payload bytes. Buffer/slice reference append snapshots segment views;
+`init(referencing:)` shares the synchronized storage and attachments; slices
+retain an owner plus range. Borrow closures receive an original lease pointer
+adjusted only by their
 range offset. Mutable offset access borrows only the tail of the containing
 segment. `copyDataBytes` and `replaceDataBytes` preflight physical overlap, then
 iterate twice over the retained segment table without a temporary view array and
@@ -260,6 +281,16 @@ Reviewed with `remark` on 2026-07-24:
 - Sample Attachment Keys
 - `CMSampleBufferCreateCopy`
 - `CMSampleBufferCreateCopyWithNewTiming`
+- `CMSampleBufferCreate`
+- `CMSampleBufferCreateWithMakeDataReadyHandler`
+- `CMSampleBufferMakeDataReady`
+- `CMBlockBufferCreateWithMemoryBlock`
+- `CMBlockBufferAppendMemoryBlock`
+- `CMBlockBufferProtocol.dataBytes`
+- `CMClock`
+- `CMTimebase`
+- `CMBufferQueue`
+- `CMSimpleQueue`
 
 The second Smoke checked the Swift declarations emitted from the local macOS 27
 SDK with `swift-symbolgraph-extract` and read `CMTimeRange.h` and
@@ -273,11 +304,11 @@ implementation.
 
 - Native:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
-  -maximum-test-execution-time-allowance 30
+  -maximum-test-execution-time-allowance 60
   -only-testing:OpenCoreMediaTests
-  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
-  — passed 61 behavior tests in 10 suites with the Swift 6.4 development
-  snapshot compiler on 2026-07-25.
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
+  — passed all 79 behavior tests in 11 suites with the fixed Swift 6.4
+  development snapshot compiler on 2026-07-25.
 - Time mapping differential:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
@@ -285,7 +316,9 @@ implementation.
   -only-testing:OpenCoreMediaTests/CMTimeMappingAppleDifferentialTests`
   — passed on 2026-07-24, including raw versus validating construction,
   endpoint preservation, nonintegral nanosecond mapping, epoch failures,
-  infinite ranges, clamping, and positive/negative folding.
+  infinite ranges, clamping, and positive/negative folding. Overflow,
+  large-timescale, conversion, and epoch arithmetic differential fixtures
+  passed on 2026-07-25.
 - Scalar timing-storage regression:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30
@@ -305,13 +338,13 @@ implementation.
   -maximum-test-execution-time-allowance 30
   -only-testing:OpenCoreMediaTests/CMSampleAttachmentSmokeTests
   -only-testing:OpenCoreMediaTests/CMAttachmentAppleDifferentialTests
-  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
   — passed on 2026-07-25, including lazy creation, fixed length, direct
   mutation, all standard raw keys, direct iteration, typed mismatch failure,
   recursive values, concurrent mutation/copy, Apple copy behavior, independent
   metadata, and unchanged image-buffer identity.
 - WASM:
-  `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
+  `~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift build
   --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
   --swift-sdk
   swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm
@@ -326,7 +359,7 @@ implementation.
   materialization, allocation failure, and lease-release contracts as the
   Embedded runtime fixture.
 - Embedded WASM:
-  `~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift build
+  `~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift build
   --swift-sdks-path ~/Library/org.swift.swiftpm/swift-sdks
   --swift-sdk
   swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
@@ -339,7 +372,8 @@ implementation.
   `./scripts/run-embedded-smoke.sh`
   — built `OpenCoreMediaEmbeddedSmoke.wasm` with the fixed Swift 6.4
   Embedded SDK and executed it through Node WASI on 2026-07-25. The smoke
-  validates Mutex-protected not-ready and typed-failure recovery, buffer-level
+  validates `any CMSampleBuffer` construction and payload access,
+  Mutex-protected not-ready and typed-failure recovery, buffer-level
   propagation, lazy per-sample creation, recursive mutation, throwing scoped
   borrows, segmented append, noncontiguous typed failure, cross-segment
   fill/copy/replace, zero-copy references, forced-copy materialization,
@@ -350,22 +384,19 @@ implementation.
   concurrent state, buffer-level attachment, and per-sample mutation/copy tests
   provide the current contention test.
 - Native Thread Sanitizer:
-  `xcodebuild test -quiet -scheme OpenCoreMedia-Package
+  `xcodebuild test -scheme OpenCoreMedia-Package
   -destination 'platform=macOS'
-  -only-testing:OpenCoreMediaTests/CMAttachmentSmokeTests
-  -only-testing:OpenCoreMediaTests/CMSampleAttachmentSmokeTests
+  -maximum-test-execution-time-allowance 60
   -enableThreadSanitizer YES
-  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
-  — passed on 2026-07-25, exercising concurrent readiness, lazy
-  materialization, buffer-level snapshot/propagation, and per-sample
-  mutation/copy paths under Thread Sanitizer.
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
+  — passed all 79 tests in 11 suites on 2026-07-25.
 - Segmented block buffers:
   `xcodebuild test -quiet -scheme OpenCoreMedia-Package
   -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 60
   -only-testing:OpenCoreMediaTests/CMBlockBufferSmokeTests
   -only-testing:OpenCoreMediaTests/CMBlockBufferAppleDifferentialTests
-  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
   — passed on 2026-07-25, covering zero-copy append/reference behavior,
   reference flags, range-specific contiguity, segment-tail mutable borrows,
   cross-segment copy/fill/replace, alias rejection, explicit range-limited
@@ -384,15 +415,69 @@ implementation.
   disposable test bundle's runtime with the snapshot's matching
   `libclang_rt.asan_osx_dynamic.dylib` and inserted that exact library through
   the generated `.xctestrun` environment before process launch.
+- Deferred blocks, multi-sample buffers, readiness, clocks, and queues:
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
+  -maximum-test-execution-time-allowance 30
+  -only-testing:OpenCoreMediaTests/CMRemainingSurfaceSmokeTests
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
+  — passed 16 focused behavior tests on 2026-07-25. The full
+  `OpenCoreMediaTests` target passed 79 tests in 11 suites. The focused runtime
+  covers lazy and assured allocation, raw-memory ranges, owned attachment
+  bytes and adapters, zero-copy multi-sample slices, revision-safe readiness,
+  anchored timebases, bounded queues, and Foundation materialization
+  independence.
+- Completion-surface Thread Sanitizer:
+  the same focused suite passed with `-enableThreadSanitizer YES` on
+  2026-07-25, exercising handler coordination plus synchronized clock,
+  timebase, attachment, block-buffer, sample-buffer, and queue state.
+- Final portability and consumer validation:
+  `./scripts/run-wasm-smoke.sh` and `./scripts/run-embedded-smoke.sh`
+  both built and executed successfully with the fixed Swift 6.4 SDKs on
+  2026-07-25. Their completion fixtures statically require `Sendable` for
+  `CMBlockBuffer`, `CMBlockSampleBuffer`, `CMBlockBuffer.Slice`, and the
+  Embedded image sample, then exercise sample destruction and zero-copy slice
+  access at runtime. A focused Thread Sanitizer run passed 40 block-buffer,
+  sample-buffer, and completion-surface tests. Finally,
+  `OpenAVFoundationDriverTesting` built for Embedded WASM against this local
+  OpenCoreMedia tree and OpenCoreVideo `29b4664`; the temporary local dependency
+  override was removed immediately after validation.
 
-## Explicitly not implemented
+## External Embedded integration finding
 
-- deferred-allocation `CMBlockBuffer`
-- allocator-backed block construction and append overloads
-- raw-buffer slice append/initializer overloads
-- Foundation `dataBytes`
-- attachment byte values and arbitrary platform-object values
-- multi-sample payload carriers
-- asynchronous data readiness callbacks
-- clocks, timebases, and queues
+The original same-module Embedded image fixture passes. A fixture that instead
+constructed OpenCoreVideo `e092d7b`'s
+`CVPackedPixelBuffer<CVOwnedPixelBufferStorage<CVNoOpPixelBufferAccessCoordinator>, CVBufferAttachments>`
+and passed it to `CMImageSampleBuffer` compiled but failed while linking the
+Embedded executable:
+
+```text
+undefined symbol:
+$e13OpenCoreVideo19CVBufferAttachmentsCAA0D17AttachmentStorageAAWP
+```
+
+The reproducer was `./scripts/run-embedded-smoke.sh` after replacing the local
+`OpenCoreMediaEmbeddedPixelBuffer(dimensions:)` construction with
+`CVPackedPixelBuffer(dimensions:pixelFormat:bytesPerPixel:bytesPerRow:)`.
+This identified the missing external
+`CVBufferAttachments: CVBufferAttachmentStorage` Embedded witness from
+OpenCoreVideo, not an OpenCoreMedia source or Sendable failure.
+
+On 2026-07-25, the same reproducer was rerun against the local OpenCoreVideo
+change that exports this conformance. That removed the missing symbol and
+exposed a Swift 6.4 Embedded compiler crash while specializing the former
+generic public `CMImageSampleBuffer` initializer. The initializer now accepts
+the type-erased Sendable pixel-buffer and video-format protocols directly.
+With both changes present, the real external `CVPackedPixelBuffer` fixture
+built, linked, and executed successfully with no additional missing symbol.
+The temporary local package dependency and external fixture were restored
+after validation.
+
+## Outside the completed milestone
+
+- exhaustive generated `CMTime` arithmetic differential fuzzing
+- audio, metadata, and codec-specific format descriptions
+- arbitrary platform-object retention inside shared attachment storage
+- real-time lockless SPSC queues and trigger callback parity
+- clock/timebase timer scheduling and operating-system host clock adapters
+- memory pools, metadata/tag groups, and text markup
 - platform camera, codec, and file adapters

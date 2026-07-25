@@ -1,25 +1,23 @@
-public protocol CMSampleBuffer:
+public protocol CMBlockSampleBufferProtocol:
     AnyObject,
-    CMAttachmentBearerProtocol,
+    CMAttachmentStorageBearerProtocol,
     CMPlatformConcurrencyContract
 {
-    associatedtype TimingCopy: CMSampleBuffer
-
     var isValid: Bool { get }
     var dataReadiness: CMSampleBufferDataReadiness { get }
     var sampleAttachments: CMSampleAttachmentsArray { get }
 
     func sampleCount() throws(CMSampleBufferError) -> Int
     func formatDescription()
-        throws(CMSampleBufferError) -> any CMVideoFormatDescription
+        throws(CMSampleBufferError) -> any CMFormatDescription
     func timingInfo(
         at index: Int
     ) throws(CMSampleBufferError) -> CMSampleTimingInfo
-    func imageBuffer()
-        throws(CMSampleBufferError) -> any CVPixelBuffer & Sendable
-    func copy(
-        withTiming timing: [CMSampleTimingInfo]
-    ) throws(CMSampleBufferError) -> TimingCopy
+    func sampleSize(at index: Int) throws(CMSampleBufferError) -> Int?
+    func dataBuffer() throws(CMSampleBufferError) -> CMBlockBuffer
+    func sampleData(
+        at index: Int
+    ) throws(CMSampleBufferError) -> CMBlockBuffer.Slice
     func sampleAttachments(
         createIfNecessary: Bool
     ) -> CMSampleAttachmentsArray?
@@ -28,17 +26,4 @@ public protocol CMSampleBuffer:
     ) throws(CMSampleBufferError)
     func makeDataReady() async throws(CMSampleBufferError)
     func invalidate() throws(CMSampleBufferError)
-}
-
-extension CMSampleBuffer {
-    public func makeDataReady() async throws(CMSampleBufferError) {
-        switch dataReadiness {
-        case .ready:
-            return
-        case .notReady:
-            throw .dataNotReady
-        case .failed(let code):
-            throw .dataFailed(code: code)
-        }
-    }
 }

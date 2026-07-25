@@ -3,13 +3,27 @@
 /// Conforming types must keep `startIndex...endIndex` within `owner` and must
 /// not invert the indices. Throwing operations validate this invariant before
 /// accessing storage.
-public protocol CMBlockBufferProtocol {
+public protocol CMBlockBufferProtocol: CMPlatformConcurrencyContract {
     var owner: CMBlockBuffer { get }
     var startIndex: Int { get }
     var endIndex: Int { get }
 }
 
 extension CMBlockBufferProtocol {
+    /// Returns the represented owner range after validating the view.
+    ///
+    /// Throwing adapters should use this method instead of `dataLength` when
+    /// the conforming value can originate outside this package.
+    @_spi(OpenCoreMediaFoundation)
+    public func validatedDataRange()
+        throws(CMBlockBufferError) -> Range<Int>
+    {
+        try owner.validatedProtocolRange(
+            startIndex: startIndex,
+            endIndex: endIndex
+        )
+    }
+
     public var dataLength: Int {
         precondition(
             startIndex >= 0
@@ -95,10 +109,7 @@ extension CMBlockBufferProtocol {
     public func withContiguousStorage<R>(
         _ body: (UnsafeRawBufferPointer) throws -> R
     ) throws -> R {
-        let range = try owner.validatedProtocolRange(
-            startIndex: startIndex,
-            endIndex: endIndex
-        )
+        let range = try validatedDataRange()
         guard !range.isEmpty else {
             throw CMBlockBufferError.emptyBuffer
         }

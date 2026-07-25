@@ -1,23 +1,39 @@
 import Synchronization
 
-public final class CMImageSampleBuffer<
-    ImageBuffer: CVPixelBuffer,
-    VideoFormat: CMVideoFormatDescription
->: CMSampleBuffer {
-    private struct State: Sendable {
-        var isValid: Bool
-        var readiness: CMSampleBufferDataReadiness
-        var sampleAttachmentStorages:
-            [CMSampleAttachmentDictionaryStorage]?
+private struct CMImageSampleState: Sendable {
+    var isValid: Bool
+    var sampleAttachmentStorages:
+        [CMSampleAttachmentDictionaryStorage]?
+}
+
+private final class CMImageSampleStateStorage: Sendable {
+    private let state: CMStateLock<CMImageSampleState>
+
+    init() {
+        state = CMStateLock(CMImageSampleState(
+            isValid: true,
+            sampleAttachmentStorages: nil
+        ))
     }
 
-    private let image: ImageBuffer
-    private let format: VideoFormat
+    func withLock<Result: ~Copyable, E: Error>(
+        _ body: (
+            inout sending CMImageSampleState
+        ) throws(E) -> sending Result
+    ) throws(E) -> sending Result {
+        try state.withLock(body)
+    }
+}
+
+public final class CMImageSampleBuffer: CMSampleBuffer {
+    private let image: any CVPixelBuffer & Sendable
+    private let format: any CMVideoFormatDescription
     private let count: Int
     private let timing: CMSampleTimingInfo
+    private let readinessTracker: CMSampleDataReadinessTracker?
     public let attachments = CMAttachmentBearerAttachments()
 
-    private let state: Mutex<State>
+    private let state: CMImageSampleStateStorage
 
     public var isValid: Bool {
         state.withLock { state in
@@ -26,9 +42,7 @@ public final class CMImageSampleBuffer<
     }
 
     public var dataReadiness: CMSampleBufferDataReadiness {
-        state.withLock { state in
-            state.readiness
-        }
+        readinessTracker?.readiness ?? .ready
     }
 
     public var sampleAttachments: CMSampleAttachmentsArray {
@@ -38,11 +52,12 @@ public final class CMImageSampleBuffer<
     }
 
     public init(
-        imageBuffer: ImageBuffer,
-        formatDescription: VideoFormat,
+        imageBuffer: any CVPixelBuffer & Sendable,
+        formatDescription: any CMVideoFormatDescription,
         sampleCount: Int = 1,
         timing: [CMSampleTimingInfo],
-        dataReadiness: CMSampleBufferDataReadiness = .ready
+        dataReadiness: CMSampleBufferDataReadiness = .ready,
+        makeDataReadyHandler: CMSampleBufferMakeDataReadyHandler? = nil
     ) throws(CMSampleBufferError) {
         guard sampleCount == 1 else {
             throw .imagePayloadRequiresSingleSample(actual: sampleCount)
@@ -75,11 +90,53 @@ public final class CMImageSampleBuffer<
         format = formatDescription
         count = sampleCount
         self.timing = sampleTiming
-        state = Mutex(State(
-            isValid: true,
-            readiness: dataReadiness,
-            sampleAttachmentStorages: nil
-        ))
+        state = CMImageSampleStateStorage()
+        readinessTracker =
+            dataReadiness == .ready && makeDataReadyHandler == nil
+            ? nil
+            : CMSampleDataReadinessTracker(
+                readiness: dataReadiness,
+                handler: makeDataReadyHandler
+            )
+    }
+
+    private init(
+        imageBuffer: any CVPixelBuffer & Sendable,
+        formatDescription: any CMVideoFormatDescription,
+        sampleCount: Int,
+        timing: [CMSampleTimingInfo],
+        readinessTracker: CMSampleDataReadinessTracker?
+    ) throws(CMSampleBufferError) {
+        guard sampleCount == 1 else {
+            throw .imagePayloadRequiresSingleSample(actual: sampleCount)
+        }
+        guard timing.count == sampleCount else {
+            throw .timingCountMismatch(
+                expected: sampleCount,
+                actual: timing.count
+            )
+        }
+        guard formatDescription.dimensions == imageBuffer.dimensions else {
+            throw .formatDimensionsMismatch(
+                expected: formatDescription.dimensions,
+                actual: imageBuffer.dimensions
+            )
+        }
+        guard formatDescription.pixelFormat == imageBuffer.pixelFormat else {
+            throw .formatPixelTypeMismatch(
+                expected: formatDescription.pixelFormat,
+                actual: imageBuffer.pixelFormat
+            )
+        }
+        let sampleTiming = timing[0]
+        try Self.validate(sampleTiming)
+
+        image = imageBuffer
+        format = formatDescription
+        count = sampleCount
+        self.timing = sampleTiming
+        self.readinessTracker = readinessTracker
+        state = CMImageSampleStateStorage()
     }
 
     public func sampleCount() throws(CMSampleBufferError) -> Int {
@@ -88,7 +145,7 @@ public final class CMImageSampleBuffer<
     }
 
     public func formatDescription()
-        throws(CMSampleBufferError) -> VideoFormat
+        throws(CMSampleBufferError) -> any CMVideoFormatDescription
     {
         try requireValid()
         return format
@@ -105,7 +162,7 @@ public final class CMImageSampleBuffer<
     }
 
     public func imageBuffer()
-        throws(CMSampleBufferError) -> ImageBuffer
+        throws(CMSampleBufferError) -> any CVPixelBuffer & Sendable
     {
         try requireReady()
         return image
@@ -113,20 +170,18 @@ public final class CMImageSampleBuffer<
 
     public func copy(
         withTiming timing: [CMSampleTimingInfo]
-    ) throws(CMSampleBufferError) -> CMImageSampleBuffer<
-        ImageBuffer,
-        VideoFormat
-    > {
-        let readiness = try currentReadiness()
+    ) throws(CMSampleBufferError) -> CMImageSampleBuffer {
+        _ = try currentReadiness()
 
         // The new sample buffer retains the same image-buffer reference.
-        // Timing, readiness, and attachment metadata receive new storage.
+        // Readiness tracking is shared while timing and attachments receive
+        // independent metadata storage.
         let copy = try CMImageSampleBuffer(
             imageBuffer: image,
             formatDescription: format,
             sampleCount: count,
             timing: timing,
-            dataReadiness: readiness
+            readinessTracker: readinessTracker
         )
         CMPropagateAttachments(self, destination: copy)
         copySampleAttachments(to: copy)
@@ -153,8 +208,25 @@ public final class CMImageSampleBuffer<
             guard state.isValid else {
                 throw .invalidated
             }
-            state.readiness = readiness
         }
+        guard let readinessTracker else {
+            guard readiness == .ready else {
+                throw .invalidReadinessTransition(
+                    from: .ready,
+                    to: readiness
+                )
+            }
+            return
+        }
+        try readinessTracker.set(readiness)
+    }
+
+    public func makeDataReady() async throws(CMSampleBufferError) {
+        try requireValid()
+        if let readinessTracker {
+            try await readinessTracker.makeReady()
+        }
+        try requireValid()
     }
 
     public func invalidate() throws(CMSampleBufferError) {
@@ -186,12 +258,8 @@ public final class CMImageSampleBuffer<
     private func currentReadiness()
         throws(CMSampleBufferError) -> CMSampleBufferDataReadiness
     {
-        try state.withLock { state throws(CMSampleBufferError) in
-            guard state.isValid else {
-                throw .invalidated
-            }
-            return state.readiness
-        }
+        try requireValid()
+        return readinessTracker?.readiness ?? .ready
     }
 
     private func materializedSampleAttachmentStorages()
@@ -216,10 +284,7 @@ public final class CMImageSampleBuffer<
     }
 
     private func copySampleAttachments(
-        to destination: borrowing CMImageSampleBuffer<
-            ImageBuffer,
-            VideoFormat
-        >
+        to destination: borrowing CMImageSampleBuffer
     ) {
         guard let sourceStorages = existingSampleAttachmentStorages()
         else {

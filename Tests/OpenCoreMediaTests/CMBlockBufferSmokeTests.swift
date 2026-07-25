@@ -1,4 +1,5 @@
 import OpenCoreMedia
+import Synchronization
 import Testing
 
 @Suite("CMBlockBuffer smoke")
@@ -959,22 +960,48 @@ private struct MalformedBlockBufferView: CMBlockBufferProtocol {
     let endIndex: Int
 }
 
-private final class BlockReleaseCounter {
-    private(set) var count = 0
-    private(set) var releasedLength = 0
+private final class BlockReleaseCounter: Sendable {
+    private struct State: Sendable {
+        var count = 0
+        var releasedLength = 0
+    }
+
+    private let state = Mutex(State())
+
+    var count: Int {
+        state.withLock { $0.count }
+    }
+
+    var releasedLength: Int {
+        state.withLock { $0.releasedLength }
+    }
 
     func record(length: Int) {
-        count += 1
-        releasedLength = length
+        state.withLock {
+            $0.count += 1
+            $0.releasedLength = length
+        }
     }
 }
 
-private final class BlockAllocationCounter {
-    private(set) var allocationCount = 0
-    private(set) var releaseCount = 0
+private final class BlockAllocationCounter: Sendable {
+    private struct State: Sendable {
+        var allocationCount = 0
+        var releaseCount = 0
+    }
+
+    private let state = Mutex(State())
+
+    var allocationCount: Int {
+        state.withLock { $0.allocationCount }
+    }
+
+    var releaseCount: Int {
+        state.withLock { $0.releaseCount }
+    }
 
     func allocate(length: Int) -> UnsafeMutableRawPointer {
-        allocationCount += 1
+        state.withLock { $0.allocationCount += 1 }
         return UnsafeMutableRawPointer.allocate(
             byteCount: length,
             alignment: 8
@@ -985,7 +1012,7 @@ private final class BlockAllocationCounter {
         pointer: UnsafeMutableRawPointer,
         length: Int
     ) {
-        releaseCount += 1
+        state.withLock { $0.releaseCount += 1 }
         pointer.deallocate()
     }
 }

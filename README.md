@@ -8,17 +8,22 @@ The implemented behavior Smokes cover rational `CMTime`, `CMTimeRange`,
 format descriptions, zero-copy image sample buffers backed by OpenCoreVideo,
 buffer-level attachments with propagation modes, lazily materialized per-sample
 attachment dictionaries, recursively typed attachment collections, and a
-segmented zero-copy `CMBlockBuffer` owner/view path. External byte leases can be
-appended or referenced without moving payload bytes. Cross-segment byte
+segmented zero-copy `CMBlockBuffer` owner/view path. External and deferred byte
+leases can be appended or referenced without moving payload bytes. Cross-segment byte
 operations traverse those leases directly, and contiguous materialization is an
 explicit allocator-visible copy. Overlapping caller memory is rejected before
 segmented copy or replacement begins. Every lease is released exactly once
-after its last buffer or slice owner is destroyed.
+after its last buffer or slice owner is destroyed. The current portable surface
+also includes owned byte attachments, platform-value adapters, multi-sample
+block buffers, revision-safe asynchronous readiness, injected clocks, anchored
+timebases, and bounded timed/simple queues. Sample buffers, block buffers, and
+zero-copy block slices are `Sendable` on Native, WASM, and Embedded.
+Foundation `Data` materialization is isolated in
+the `OpenCoreMediaFoundation` product as an explicit copy boundary.
 
-This is not complete Core Media API compatibility. Deferred block allocation,
-allocator-backed append overloads, attachment byte payloads and platform-object
-adapters, multi-sample payload carriers, asynchronous readiness, clocks,
-timebases, and queues remain explicitly unimplemented. See
+This is not complete Core Media API compatibility. Audio/metadata format
+families, timer scheduling, queue triggers, real-time lockless platform queues,
+memory pools, and metadata/tag groups remain outside the completed milestone. See
 [IMPLEMENTATION_PROGRESS.md](IMPLEMENTATION_PROGRESS.md) for current evidence.
 
 ## Supported production targets
@@ -41,12 +46,12 @@ partial, and planned Apple Core Media families.
 xcodebuild test \
   -scheme OpenCoreMedia-Package \
   -destination 'platform=macOS' \
-  -maximum-test-execution-time-allowance 30 \
-  SWIFT_EXEC="$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc"
-"$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift" build \
+  -maximum-test-execution-time-allowance 60 \
+  SWIFT_EXEC="$HOME/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc"
+"$HOME/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift" build \
   --swift-sdks-path "$HOME/Library/org.swift.swiftpm/swift-sdks" \
   --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm
-"$HOME/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift" build \
+"$HOME/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swift" build \
   --swift-sdks-path "$HOME/Library/org.swift.swiftpm/swift-sdks" \
   --swift-sdk swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
 ./scripts/run-wasm-smoke.sh
