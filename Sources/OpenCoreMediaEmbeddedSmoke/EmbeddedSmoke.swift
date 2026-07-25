@@ -40,6 +40,47 @@ struct OpenCoreMediaEmbeddedSmoke {
             .integer(1),
             .dictionary(["ready": .boolean(true)])
         ])
+        let propagatedKey = CMAttachmentKey(
+            rawValue: "smoke.propagated"
+        )
+        sample.attachments[propagatedKey] = .shouldPropagate(
+            .integer(7)
+        )
+
+        try sample.setDataReadiness(.notReady)
+        do {
+            _ = try sample.imageBuffer()
+            throw OpenCoreMediaEmbeddedSmokeError.readinessIgnored
+        } catch CMSampleBufferError.dataNotReady {
+        }
+        try sample.setDataReadiness(.failed(code: 17))
+        do {
+            _ = try sample.imageBuffer()
+            throw OpenCoreMediaEmbeddedSmokeError.readinessFailureIgnored
+        } catch CMSampleBufferError.dataFailed(code: 17) {
+        }
+        try sample.setDataReadiness(.ready)
+
+        let pointer = UnsafeMutableRawPointer.allocate(
+            byteCount: 8,
+            alignment: 8
+        )
+        let block = try CMBlockBuffer(
+            buffer: UnsafeMutableRawBufferPointer(
+                start: pointer,
+                count: 8
+            ),
+            deallocator: { releasedPointer, _ in
+                releasedPointer.deallocate()
+            }
+        )
+        do {
+            try block.withContiguousStorage { _ -> Void in
+                throw OpenCoreMediaEmbeddedBorrowError.expected
+            }
+            throw OpenCoreMediaEmbeddedSmokeError.borrowFailureIgnored
+        } catch OpenCoreMediaEmbeddedBorrowError.expected {
+        }
 
         let copy = try sample.copy(withTiming: [timing])
         let copied = copy.sampleAttachments[0]
@@ -48,6 +89,9 @@ struct OpenCoreMediaEmbeddedSmoke {
                   .integer(1),
                   .dictionary(["ready": .boolean(true)])
               ]),
+              copy.attachments[propagatedKey] == .shouldPropagate(
+                  .integer(7)
+              ),
               try sample.imageBuffer() === copy.imageBuffer()
         else {
             throw OpenCoreMediaEmbeddedSmokeError.copyContractViolated
@@ -62,6 +106,13 @@ struct OpenCoreMediaEmbeddedSmoke {
 
 enum OpenCoreMediaEmbeddedSmokeError: Error {
     case unexpectedMaterialization
+    case readinessIgnored
+    case readinessFailureIgnored
+    case borrowFailureIgnored
     case copyContractViolated
     case metadataAliased
+}
+
+enum OpenCoreMediaEmbeddedBorrowError: Error {
+    case expected
 }

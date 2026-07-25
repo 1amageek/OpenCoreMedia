@@ -150,8 +150,14 @@ the caller still creates the boundary array.
 
 The concrete sample buffer is generic over its pixel buffer and video format.
 This avoids existential dispatch on Embedded Swift while preserving protocol
-abstraction. Non-Embedded builds require Sendable payloads and protect mutable
-state with `Mutex`; Embedded builds use owner-isolated, non-Sendable state.
+abstraction. Native, WASM, and the fixed Swift 6.4 Embedded WASM baseline use
+the same Mutex API and exclusion semantics. Lock ownership is separated:
+`CMImageSampleBuffer.State` protects validity, readiness, and the optional
+per-sample storage array; `CMAttachmentStorageReference` protects buffer-level
+attachments; each `CMSampleAttachmentDictionaryStorage` protects one
+per-sample dictionary. The target runtime supplies the Mutex implementation;
+no locks are nested, and no `await` or media-byte work occurs while a lock is
+held.
 
 `CMBlockBuffer` stores an external-memory lease rather than payload bytes.
 References share the lease and slices retain an owner plus range. Borrow
@@ -287,14 +293,30 @@ implementation.
   swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded
   --target OpenCoreMedia`
   — passed after `swift package clean` with the matching Swift 6.4
-  development snapshot compiler and SDK on 2026-07-25.
+  development snapshot compiler and SDK on 2026-07-25. The target triple is
+  `wasm32-unknown-wasip1`; the Embedded platform module is
+  `embedded/Synchronization.swiftmodule/wasm32-unknown-wasip1.swiftmodule`.
 - Embedded runtime:
   `./scripts/run-embedded-smoke.sh`
   — built `OpenCoreMediaEmbeddedSmoke.wasm` with the fixed Swift 6.4
   Embedded SDK and executed it through Node WASI on 2026-07-25. The smoke
-  validates lazy creation, recursive mutation, timing-copy metadata
-  independence, and unchanged image-buffer identity on the owner-isolated
-  branch.
+  validates Mutex-protected not-ready and typed-failure recovery, buffer-level
+  propagation, lazy per-sample creation, recursive mutation, throwing scoped
+  borrows, timing-copy metadata independence, and unchanged image-buffer
+  identity. The script records the toolchain, Swift SDK, target triple, and
+  Embedded Synchronization module identifiers. Node WASI is a single-threaded
+  execution fixture; Native concurrent state, buffer-level attachment, and
+  per-sample mutation/copy tests provide the current contention test.
+- Native Thread Sanitizer:
+  `xcodebuild test -quiet -scheme OpenCoreMedia-Package
+  -destination 'platform=macOS'
+  -only-testing:OpenCoreMediaTests/CMAttachmentSmokeTests
+  -only-testing:OpenCoreMediaTests/CMSampleAttachmentSmokeTests
+  -enableThreadSanitizer YES
+  SWIFT_EXEC=~/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swiftc`
+  — passed on 2026-07-25, exercising concurrent readiness, lazy
+  materialization, buffer-level snapshot/propagation, and per-sample
+  mutation/copy paths under Thread Sanitizer.
 
 ## Explicitly not implemented
 

@@ -146,6 +146,51 @@ struct CMAttachmentSmokeTests {
         source.attachments.removeAll()
         #expect(source.attachments.propagated.isEmpty)
     }
+
+    @Test("Concurrent snapshots and propagation remain race-safe")
+    func concurrentSnapshotsAndPropagation() async throws {
+        let source = TestAttachmentBearer()
+        let destination = TestAttachmentBearer()
+
+        await withTaskGroup(of: Void.self) { group in
+            for worker in 0..<4 {
+                group.addTask {
+                    let key = CMAttachmentKey(
+                        rawValue: "test.worker.\(worker)"
+                    )
+                    for value in 0..<50 {
+                        CMSetAttachment(
+                            source,
+                            key: key,
+                            value: .integer(Int64(value)),
+                            attachmentMode: .shouldPropagate
+                        )
+                        _ = CMGetAttachment(source, key: key)
+                        _ = CMCopyDictionaryOfAttachments(
+                            target: source,
+                            attachmentMode: .shouldPropagate
+                        )
+                        CMPropagateAttachments(
+                            source,
+                            destination: destination
+                        )
+                    }
+                }
+            }
+            await group.waitForAll()
+        }
+
+        CMPropagateAttachments(source, destination: destination)
+        for worker in 0..<4 {
+            let key = CMAttachmentKey(
+                rawValue: "test.worker.\(worker)"
+            )
+            #expect(CMGetAttachment(source, key: key)?.value == .integer(49))
+            #expect(
+                CMGetAttachment(destination, key: key)?.value == .integer(49)
+            )
+        }
+    }
 }
 
 private final class TestAttachmentBearer:

@@ -1,12 +1,10 @@
-#if !hasFeature(Embedded)
 import Synchronization
-#endif
 
 public final class CMImageSampleBuffer<
     ImageBuffer: CVPixelBuffer,
     VideoFormat: CMVideoFormatDescription
 >: CMSampleBuffer {
-    private struct State: CMPlatformConcurrencyContract {
+    private struct State: Sendable {
         var isValid: Bool
         var readiness: CMSampleBufferDataReadiness
         var sampleAttachmentStorages:
@@ -19,30 +17,18 @@ public final class CMImageSampleBuffer<
     private let timing: CMSampleTimingInfo
     public let attachments = CMAttachmentBearerAttachments()
 
-#if hasFeature(Embedded)
-    private var embeddedState: State
-#else
     private let state: Mutex<State>
-#endif
 
     public var isValid: Bool {
-#if hasFeature(Embedded)
-        embeddedState.isValid
-#else
         state.withLock { state in
             state.isValid
         }
-#endif
     }
 
     public var dataReadiness: CMSampleBufferDataReadiness {
-#if hasFeature(Embedded)
-        embeddedState.readiness
-#else
         state.withLock { state in
             state.readiness
         }
-#endif
     }
 
     public var sampleAttachments: CMSampleAttachmentsArray {
@@ -89,19 +75,11 @@ public final class CMImageSampleBuffer<
         format = formatDescription
         count = sampleCount
         self.timing = sampleTiming
-#if hasFeature(Embedded)
-        embeddedState = State(
-            isValid: true,
-            readiness: dataReadiness,
-            sampleAttachmentStorages: nil
-        )
-#else
         state = Mutex(State(
             isValid: true,
             readiness: dataReadiness,
             sampleAttachmentStorages: nil
         ))
-#endif
     }
 
     public func sampleCount() throws(CMSampleBufferError) -> Int {
@@ -171,43 +149,26 @@ public final class CMImageSampleBuffer<
     public func setDataReadiness(
         _ readiness: CMSampleBufferDataReadiness
     ) throws(CMSampleBufferError) {
-#if hasFeature(Embedded)
-        guard embeddedState.isValid else {
-            throw .invalidated
-        }
-        embeddedState.readiness = readiness
-#else
         try state.withLock { state throws(CMSampleBufferError) in
             guard state.isValid else {
                 throw .invalidated
             }
             state.readiness = readiness
         }
-#endif
     }
 
     public func invalidate() throws(CMSampleBufferError) {
-#if hasFeature(Embedded)
-        embeddedState.isValid = false
-#else
         state.withLock { state in
             state.isValid = false
         }
-#endif
     }
 
     private func requireValid() throws(CMSampleBufferError) {
-#if hasFeature(Embedded)
-        guard embeddedState.isValid else {
-            throw .invalidated
-        }
-#else
         try state.withLock { state throws(CMSampleBufferError) in
             guard state.isValid else {
                 throw .invalidated
             }
         }
-#endif
     }
 
     private func requireReady() throws(CMSampleBufferError) {
@@ -225,32 +186,17 @@ public final class CMImageSampleBuffer<
     private func currentReadiness()
         throws(CMSampleBufferError) -> CMSampleBufferDataReadiness
     {
-#if hasFeature(Embedded)
-        guard embeddedState.isValid else {
-            throw .invalidated
-        }
-        return embeddedState.readiness
-#else
         try state.withLock { state throws(CMSampleBufferError) in
             guard state.isValid else {
                 throw .invalidated
             }
             return state.readiness
         }
-#endif
     }
 
     private func materializedSampleAttachmentStorages()
         -> [CMSampleAttachmentDictionaryStorage]
     {
-#if hasFeature(Embedded)
-        if let storages = embeddedState.sampleAttachmentStorages {
-            return storages
-        }
-        let created = Self.makeSampleAttachmentStorages(count: count)
-        embeddedState.sampleAttachmentStorages = created
-        return created
-#else
         state.withLock { state in
             if let storages = state.sampleAttachmentStorages {
                 return storages
@@ -259,19 +205,14 @@ public final class CMImageSampleBuffer<
             state.sampleAttachmentStorages = created
             return created
         }
-#endif
     }
 
     private func existingSampleAttachmentStorages()
         -> [CMSampleAttachmentDictionaryStorage]?
     {
-#if hasFeature(Embedded)
-        embeddedState.sampleAttachmentStorages
-#else
         state.withLock { state in
             state.sampleAttachmentStorages
         }
-#endif
     }
 
     private func copySampleAttachments(
@@ -294,15 +235,11 @@ public final class CMImageSampleBuffer<
     }
 
     private func installSampleAttachmentStorages(
-        _ storages: consuming [CMSampleAttachmentDictionaryStorage]
+        _ storages: [CMSampleAttachmentDictionaryStorage]
     ) {
-#if hasFeature(Embedded)
-        embeddedState.sampleAttachmentStorages = storages
-#else
         state.withLock { state in
             state.sampleAttachmentStorages = storages
         }
-#endif
     }
 
     private static func makeSampleAttachmentStorages(

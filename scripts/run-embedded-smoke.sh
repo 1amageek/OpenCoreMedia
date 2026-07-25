@@ -8,9 +8,18 @@ OPEN_CORE_MEDIA_ROOT=$(
 OPEN_CORE_MEDIA_SWIFT="${HOME}/Library/Developer/Toolchains/swift-latest.xctoolchain/usr/bin/swift"
 OPEN_CORE_MEDIA_SDKS="${HOME}/Library/org.swift.swiftpm/swift-sdks"
 OPEN_CORE_MEDIA_SDK="swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a_wasm-embedded"
+OPEN_CORE_MEDIA_TARGET_TRIPLE="wasm32-unknown-wasip1"
+OPEN_CORE_MEDIA_PLATFORM_IMPLEMENTATION="embedded/Synchronization.swiftmodule/wasm32-unknown-wasip1.swiftmodule"
 OPEN_CORE_MEDIA_WASM="${OPEN_CORE_MEDIA_ROOT}/.build/out/Products/Debug-webassembly-wasm32/OpenCoreMediaEmbeddedSmoke.wasm"
 
 cd "${OPEN_CORE_MEDIA_ROOT}"
+
+printf 'Toolchain: '
+"${OPEN_CORE_MEDIA_SWIFT}" --version | sed -n '1p'
+printf 'Swift SDK: %s\n' "${OPEN_CORE_MEDIA_SDK}"
+printf 'Target triple: %s\n' "${OPEN_CORE_MEDIA_TARGET_TRIPLE}"
+printf 'Embedded platform implementation: %s\n' \
+    "${OPEN_CORE_MEDIA_PLATFORM_IMPLEMENTATION}"
 
 perl -e 'alarm shift @ARGV; exec @ARGV' 300 \
     "${OPEN_CORE_MEDIA_SWIFT}" build \

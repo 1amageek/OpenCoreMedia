@@ -63,19 +63,6 @@ extension CMBlockBufferProtocol {
         self[startIndex..<endIndex]
     }
 
-    #if hasFeature(Embedded)
-    public func withContiguousStorage<R>(
-        _ body: (UnsafeRawBufferPointer) -> R
-    ) throws(CMBlockBufferError) -> R {
-        guard isContiguous else {
-            throw .nonContiguousStorage
-        }
-        return owner.withReadBytes(
-            in: startIndex..<endIndex,
-            body
-        )
-    }
-    #else
     public func withContiguousStorage<R>(
         _ body: (UnsafeRawBufferPointer) throws -> R
     ) throws -> R {
@@ -87,7 +74,6 @@ extension CMBlockBufferProtocol {
             body
         )
     }
-    #endif
 
     public func copyDataBytes(
         to destination: UnsafeMutableRawBufferPointer

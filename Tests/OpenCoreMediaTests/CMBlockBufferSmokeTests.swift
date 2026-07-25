@@ -108,6 +108,17 @@ struct CMBlockBufferSmokeTests {
         }
     }
 
+    @Test("Borrow closures propagate their own errors")
+    func throwingBorrow() throws {
+        let fixture = try makeBuffer(length: 8)
+
+        #expect(throws: CMBlockBufferBorrowTestError.expected) {
+            try fixture.buffer.withContiguousStorage { _ -> Void in
+                throw CMBlockBufferBorrowTestError.expected
+            }
+        }
+    }
+
     @Test("Explicit copy replace and fill operations expose copy boundaries")
     func explicitByteOperations() throws {
         let fixture = try makeBuffer(length: 8)
@@ -256,6 +267,10 @@ struct CMBlockBufferSmokeTests {
         )
         return (buffer, releaseCounter)
     }
+}
+
+private enum CMBlockBufferBorrowTestError: Error {
+    case expected
 }
 
 private final class BlockReleaseCounter {

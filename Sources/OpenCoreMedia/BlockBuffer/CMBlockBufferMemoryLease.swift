@@ -17,29 +17,6 @@ final class CMBlockBufferMemoryLease {
         deallocator(pointer, byteCount)
     }
 
-    #if hasFeature(Embedded)
-    func withReadBytes<R>(
-        in range: Range<Int>,
-        _ body: (UnsafeRawBufferPointer) -> R
-    ) -> R {
-        let bytes = UnsafeRawBufferPointer(
-            start: pointer.advanced(by: range.lowerBound),
-            count: range.count
-        )
-        return body(bytes)
-    }
-
-    func withWriteBytes<R>(
-        in range: Range<Int>,
-        _ body: (UnsafeMutableRawBufferPointer) -> R
-    ) -> R {
-        let bytes = UnsafeMutableRawBufferPointer(
-            start: pointer.advanced(by: range.lowerBound),
-            count: range.count
-        )
-        return body(bytes)
-    }
-    #else
     func withReadBytes<R>(
         in range: Range<Int>,
         _ body: (UnsafeRawBufferPointer) throws -> R
@@ -61,5 +38,4 @@ final class CMBlockBufferMemoryLease {
         )
         return try body(bytes)
     }
-    #endif
 }

@@ -65,24 +65,6 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         true
     }
 
-    #if hasFeature(Embedded)
-    public func withUnsafeMutableBytes<R>(
-        atOffset offset: Int = 0,
-        _ body: (UnsafeMutableRawBufferPointer) -> R
-    ) throws(CMBlockBufferError) -> R {
-        guard offset >= 0, offset <= dataLength else {
-            throw .invalidRange(
-                lowerBound: offset,
-                upperBound: dataLength,
-                validLowerBound: 0,
-                validUpperBound: dataLength
-            )
-        }
-        let requestedRange = offset..<dataLength
-        let absoluteRange = try validatedAbsoluteRange(requestedRange)
-        return withWriteBytes(in: absoluteRange, body)
-    }
-    #else
     public func withUnsafeMutableBytes<R>(
         atOffset offset: Int = 0,
         _ body: (UnsafeMutableRawBufferPointer) throws -> R
@@ -99,7 +81,6 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         let absoluteRange = try validatedAbsoluteRange(requestedRange)
         return try withWriteBytes(in: absoluteRange, body)
     }
-    #endif
 
     func validatedSlice(
         _ bounds: Range<Int>,
@@ -132,21 +113,6 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
         return Slice(owner: self, bounds: bounds)
     }
 
-    #if hasFeature(Embedded)
-    func withReadBytes<R>(
-        in range: Range<Int>,
-        _ body: (UnsafeRawBufferPointer) -> R
-    ) -> R {
-        memoryLease.withReadBytes(in: range, body)
-    }
-
-    func withWriteBytes<R>(
-        in range: Range<Int>,
-        _ body: (UnsafeMutableRawBufferPointer) -> R
-    ) -> R {
-        memoryLease.withWriteBytes(in: range, body)
-    }
-    #else
     func withReadBytes<R>(
         in range: Range<Int>,
         _ body: (UnsafeRawBufferPointer) throws -> R
@@ -160,7 +126,6 @@ public final class CMBlockBuffer: CMBlockBufferProtocol {
     ) rethrows -> R {
         try memoryLease.withWriteBytes(in: range, body)
     }
-    #endif
 
     private func validatedAbsoluteRange(
         _ relativeRange: Range<Int>

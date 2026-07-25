@@ -217,6 +217,42 @@ struct CMSampleAttachmentSmokeTests {
         }
     }
 
+    @Test("Readiness and lazy materialization remain race-safe")
+    func concurrentReadinessAndMaterialization() async throws {
+        let sample = try makeSample()
+
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for worker in 0..<4 {
+                group.addTask {
+                    let key = CMSampleAttachmentKey(
+                        rawValue: "test.materialization.\(worker)"
+                    )
+                    for value in 0..<50 {
+                        let readiness: CMSampleBufferDataReadiness =
+                            value.isMultiple(of: 2) ? .notReady : .ready
+                        try sample.setDataReadiness(readiness)
+                        _ = sample.dataReadiness
+
+                        let attachment = sample.sampleAttachments[0]
+                        attachment[key] = .integer(Int64(value))
+                        _ = attachment[key]
+                    }
+                }
+            }
+            try await group.waitForAll()
+        }
+
+        try sample.setDataReadiness(.ready)
+        _ = try sample.imageBuffer()
+        let attachment = sample.sampleAttachments[0]
+        for worker in 0..<4 {
+            let key = CMSampleAttachmentKey(
+                rawValue: "test.materialization.\(worker)"
+            )
+            #expect(attachment[key] == .integer(49))
+        }
+    }
+
     private func makeSample() throws -> CMImageSampleBuffer<
         SampleAttachmentTestPixelBuffer,
         CMImmutableVideoFormatDescription

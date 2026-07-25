@@ -279,6 +279,15 @@ materialization.
 Short in-memory state is protected with `Mutex`. Ordered readiness operations that
 can suspend use an actor. `await` never occurs inside `withLock`.
 
+The fixed Swift 6.4 Embedded WASM baseline uses the same
+`Synchronization.Mutex` API and internal exclusion semantics for sample
+readiness, buffer-level attachments, and per-sample dictionaries as Native and
+WASM; the target supplies the backend. `hasFeature(Embedded)` does not select
+weaker internal exclusion for these mutable metadata paths. Public payload
+`Sendable` requirements remain a separate platform contract.
+ISR and DMA callback transfer remain outside these metadata objects and require
+their platform-specific atomic or bounded-queue boundary.
+
 `CMBlockBuffer` follows Apple's non-Sendable reference semantics. Its mutable
 external storage is owner-isolated and is not protected by a lock; callers must
 not move a buffer or borrowed pointer across concurrency boundaries.
@@ -306,11 +315,10 @@ CoreFoundation nor Foundation, so allocator-taking initializers and
 `dataBytes()` are absent. Platform adapters may bridge their allocator into an
 external mutable buffer and deallocator closure.
 
-On Native and regular WASM, scoped borrow callbacks may throw, matching Apple's
-Swift overlay. Embedded Swift does not support untyped thrown errors. Its borrow
-callbacks are therefore nonthrowing and the outer operation uses
-`throws(CMBlockBufferError)`. The normal nonthrowing-closure call form remains
-the same on all supported targets.
+Scoped borrow callbacks may throw on Native, WASM, and the fixed Swift 6.4
+Embedded WASM baseline, matching Apple's Swift overlay. The borrow remains
+scoped on every target; the pointer cannot escape through OpenCoreMedia-owned
+storage.
 
 Apple range subscripts are nonthrowing and enforce valid collection indices.
 OpenCoreMedia preserves those subscripts for valid basic use and additionally
