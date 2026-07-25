@@ -177,12 +177,12 @@ no image bytes are read or copied. The optional owner array lives in the
 sample's existing state, so unused per-sample attachments do not require a
 separate coordinator allocation.
 
-The public initializer retains its one-element timing-array input for API
-compatibility. After validating that input, the single-sample implementation
-stores one `CMSampleTimingInfo` value rather than retaining an `Array` inside
-every sample object. This removes persistent array storage from the high-rate
-sample path, but does not claim that construction is allocation-free because
-the caller still creates the boundary array.
+The public Apple-shaped initializer retains its one-element timing-array input
+for API compatibility. After validating that input, the single-sample
+implementation stores one `CMSampleTimingInfo` value rather than retaining an
+`Array` inside every sample object. A portable scalar-timing initializer lets
+camera adapters remove the boundary array from their high-rate construction
+path. Both forms preserve the same zero-copy pixel owner and typed validation.
 
 The image sample buffer is non-generic and stores Sendable pixel-buffer and
 video-format existentials. The block sample buffer is also non-generic and
@@ -307,8 +307,8 @@ implementation.
   -maximum-test-execution-time-allowance 60
   -only-testing:OpenCoreMediaTests
   SWIFT_EXEC=~/Library/Developer/Toolchains/swift-6.4.x-DEVELOPMENT-SNAPSHOT-2026-07-17-a.xctoolchain/usr/bin/swiftc`
-  — passed all 79 behavior tests in 11 suites with the fixed Swift 6.4
-  development snapshot compiler on 2026-07-25.
+  — passed all 80 behavior tests with the fixed Swift 6.4 development snapshot
+  compiler on 2026-07-26.
 - Time mapping differential:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 60
@@ -330,6 +330,14 @@ implementation.
   -only-testing:OpenCoreMediaTests/SampleBufferSmokeTests`
   — passed on 2026-07-24, including index `0`, negative, and upper-bound
   timing access plus payload identity and readiness behavior.
+- Scalar timing-construction regression:
+  `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
+  -maximum-test-execution-time-allowance 30
+  -parallel-testing-enabled NO
+  -only-testing:OpenCoreMediaTests/SampleBufferSmokeTests
+  SWIFT_EXEC=<2026-07-17 Swift 6.4 snapshot swiftc>`
+  — passed 8 tests on 2026-07-25, including scalar construction, payload
+  identity, empty timing-copy typed failure, readiness, and format failures.
 - Buffer-level attachments:
   `xcodebuild test -scheme OpenCoreMedia-Package -destination 'platform=macOS'
   -maximum-test-execution-time-allowance 30

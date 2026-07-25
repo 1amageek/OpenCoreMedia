@@ -240,11 +240,12 @@ A sample buffer may contain zero or more samples of one uniform media type. It
 retains its payload lease. Timing, sizes, and format must agree with the declared
 sample count.
 
-The image-buffer implementation accepts exactly one sample. Its public
-timing input remains an array for API compatibility, but validation collapses
-that input to one stored `CMSampleTimingInfo` value. This avoids persistent
-per-frame timing-array storage without claiming that boundary-array creation is
-allocation-free.
+The image-buffer implementation accepts exactly one sample. Its Apple-shaped
+initializer retains the timing array for API compatibility, validates it, and
+collapses it to one stored `CMSampleTimingInfo` value. A portable scalar-timing
+overload lets high-rate capture adapters bypass construction of the
+single-element boundary array. Both paths retain the same payload owner and
+perform no media-byte copy.
 
 Readiness is an explicit state machine:
 

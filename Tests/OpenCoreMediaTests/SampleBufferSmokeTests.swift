@@ -42,6 +42,20 @@ struct SampleBufferSmokeTests {
         }
     }
 
+    @Test("Scalar timing construction preserves the zero-copy image contract")
+    func scalarTimingConstructionSharesPixelStorage() throws {
+        let fixture = try makeFixture()
+        let sample = try CMImageSampleBuffer(
+            imageBuffer: fixture.image,
+            formatDescription: fixture.format,
+            timing: fixture.timing
+        )
+
+        #expect(try sample.imageBuffer() === fixture.image)
+        #expect(try sample.sampleCount() == 1)
+        #expect(try sample.timingInfo(at: 0) == fixture.timing)
+    }
+
     @Test("Timing copies share the original image storage")
     func timingCopySharesPixelStorage() throws {
         let fixture = try makeFixture()
@@ -152,6 +166,18 @@ struct SampleBufferSmokeTests {
                 formatDescription: fixture.format,
                 timing: []
             )
+        }
+
+        let sample = try CMImageSampleBuffer(
+            imageBuffer: fixture.image,
+            formatDescription: fixture.format,
+            timing: fixture.timing
+        )
+        #expect(throws: CMSampleBufferError.timingCountMismatch(
+            expected: 1,
+            actual: 0
+        )) {
+            _ = try sample.copy(withTiming: [])
         }
     }
 

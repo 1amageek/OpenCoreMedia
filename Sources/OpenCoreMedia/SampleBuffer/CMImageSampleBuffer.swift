@@ -51,7 +51,7 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
         )
     }
 
-    public init(
+    public convenience init(
         imageBuffer: any CVPixelBuffer & Sendable,
         formatDescription: any CMVideoFormatDescription,
         sampleCount: Int = 1,
@@ -68,6 +68,29 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
                 actual: timing.count
             )
         }
+        try self.init(
+            imageBuffer: imageBuffer,
+            formatDescription: formatDescription,
+            timing: timing[0],
+            dataReadiness: dataReadiness,
+            makeDataReadyHandler: makeDataReadyHandler
+        )
+    }
+
+    /// Creates the single-image sample without materializing a one-element
+    /// timing array.
+    ///
+    /// This portable overload preserves the same validation and ownership
+    /// contract as the Apple-shaped array initializer. It is intended for
+    /// high-rate capture adapters whose payload already represents exactly one
+    /// timed image.
+    public init(
+        imageBuffer: any CVPixelBuffer & Sendable,
+        formatDescription: any CMVideoFormatDescription,
+        timing: CMSampleTimingInfo,
+        dataReadiness: CMSampleBufferDataReadiness = .ready,
+        makeDataReadyHandler: CMSampleBufferMakeDataReadyHandler? = nil
+    ) throws(CMSampleBufferError) {
         guard formatDescription.dimensions == imageBuffer.dimensions else {
             throw .formatDimensionsMismatch(
                 expected: formatDescription.dimensions,
@@ -81,15 +104,14 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
             )
         }
 
-        let sampleTiming = timing[0]
-        try Self.validate(sampleTiming)
+        try Self.validate(timing)
 
         // The sample buffer retains the image buffer owner. No media bytes are
         // copied or materialized at this boundary.
         image = imageBuffer
         format = formatDescription
-        count = sampleCount
-        self.timing = sampleTiming
+        count = 1
+        self.timing = timing
         state = CMImageSampleStateStorage()
         readinessTracker =
             dataReadiness == .ready && makeDataReadyHandler == nil
@@ -104,17 +126,11 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
         imageBuffer: any CVPixelBuffer & Sendable,
         formatDescription: any CMVideoFormatDescription,
         sampleCount: Int,
-        timing: [CMSampleTimingInfo],
+        timing: CMSampleTimingInfo,
         readinessTracker: CMSampleDataReadinessTracker?
     ) throws(CMSampleBufferError) {
         guard sampleCount == 1 else {
             throw .imagePayloadRequiresSingleSample(actual: sampleCount)
-        }
-        guard timing.count == sampleCount else {
-            throw .timingCountMismatch(
-                expected: sampleCount,
-                actual: timing.count
-            )
         }
         guard formatDescription.dimensions == imageBuffer.dimensions else {
             throw .formatDimensionsMismatch(
@@ -128,13 +144,12 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
                 actual: imageBuffer.pixelFormat
             )
         }
-        let sampleTiming = timing[0]
-        try Self.validate(sampleTiming)
+        try Self.validate(timing)
 
         image = imageBuffer
         format = formatDescription
         count = sampleCount
-        self.timing = sampleTiming
+        self.timing = timing
         self.readinessTracker = readinessTracker
         state = CMImageSampleStateStorage()
     }
@@ -172,6 +187,12 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
         withTiming timing: [CMSampleTimingInfo]
     ) throws(CMSampleBufferError) -> CMImageSampleBuffer {
         _ = try currentReadiness()
+        guard timing.count == count else {
+            throw .timingCountMismatch(
+                expected: count,
+                actual: timing.count
+            )
+        }
 
         // The new sample buffer retains the same image-buffer reference.
         // Readiness tracking is shared while timing and attachments receive
@@ -180,7 +201,7 @@ public final class CMImageSampleBuffer: CMSampleBuffer {
             imageBuffer: image,
             formatDescription: format,
             sampleCount: count,
-            timing: timing,
+            timing: timing[0],
             readinessTracker: readinessTracker
         )
         CMPropagateAttachments(self, destination: copy)
