@@ -826,10 +826,7 @@ private struct MalformedBlockBufferView: CMBlockBufferProtocol {
     let endIndex = 1
 }
 
-private typealias RemainingSurfacePixelBuffer = CVPackedPixelBuffer<
-    CVOwnedPixelBufferStorage<CVNoOpPixelBufferAccessCoordinator>,
-    CVBufferAttachments
->
+private typealias RemainingSurfacePixelBuffer = CVPackedPixelBuffer
 
 private struct TimedQueueValue: Sendable, Equatable {
     let presentationTimeStamp: CMTime

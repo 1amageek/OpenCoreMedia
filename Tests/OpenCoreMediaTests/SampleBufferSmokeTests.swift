@@ -318,7 +318,4 @@ struct SampleBufferSmokeTests {
     }
 }
 
-private typealias TestPixelBuffer = CVPackedPixelBuffer<
-    CVOwnedPixelBufferStorage<CVNoOpPixelBufferAccessCoordinator>,
-    CVBufferAttachments
->
+private typealias TestPixelBuffer = CVPackedPixelBuffer

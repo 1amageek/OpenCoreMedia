@@ -291,7 +291,4 @@ struct CMSampleAttachmentSmokeTests {
     }
 }
 
-private typealias SampleAttachmentTestPixelBuffer = CVPackedPixelBuffer<
-    CVOwnedPixelBufferStorage<CVNoOpPixelBufferAccessCoordinator>,
-    CVBufferAttachments
->
+private typealias SampleAttachmentTestPixelBuffer = CVPackedPixelBuffer

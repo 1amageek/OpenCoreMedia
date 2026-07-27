@@ -459,7 +459,7 @@ implementation.
 
 The original same-module Embedded image fixture passes. A fixture that instead
 constructed OpenCoreVideo `e092d7b`'s
-`CVPackedPixelBuffer<CVOwnedPixelBufferStorage<CVNoOpPixelBufferAccessCoordinator>, CVBufferAttachments>`
+`CVPackedPixelBuffer`
 and passed it to `CMImageSampleBuffer` compiled but failed while linking the
 Embedded executable:
 
@@ -484,6 +484,15 @@ With both changes present, the real external `CVPackedPixelBuffer` fixture
 built, linked, and executed successfully with no additional missing symbol.
 The temporary local package dependency and external fixture were restored
 after validation.
+
+On 2026-07-27, OpenCoreVideo `adb0ff9` replaced the cross-module dependent
+class layout with a fixed-layout `CVPackedPixelBuffer` while retaining generic
+storage injection at its initializer boundary. OpenCoreMedia resolved that
+revision through its remote URL dependency, passed all 80 native tests, built
+the library for regular and Embedded WASM, and executed its portable smoke in
+debug and release configurations on both SDKs. The runtime link command used
+the fixed SDK's `libswiftUnicodeDataTables.a` search directory; no local package
+dependency was present.
 
 ## Outside the completed milestone
 
