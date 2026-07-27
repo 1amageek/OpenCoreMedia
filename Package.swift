@@ -35,6 +35,7 @@ let package = Package(
         .executableTarget(
             name: "OpenCoreMediaEmbeddedSmoke",
             dependencies: ["OpenCoreMedia"],
+            path: "Tests/Runtime/OpenCoreMediaEmbeddedSmoke",
             linkerSettings: [
                 .linkedLibrary(
                     "swiftUnicodeDataTables",
@@ -44,7 +45,8 @@ let package = Package(
         ),
         .executableTarget(
             name: "OpenCoreMediaBlockBufferSmoke",
-            dependencies: ["OpenCoreMedia"]
+            dependencies: ["OpenCoreMedia"],
+            path: "Tests/Runtime/OpenCoreMediaBlockBufferSmoke"
         ),
         .testTarget(
             name: "OpenCoreMediaTests",
